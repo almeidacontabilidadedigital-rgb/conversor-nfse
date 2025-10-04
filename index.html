@@ -177,10 +177,11 @@
             logMessagesDiv.appendChild(logEntry);
             logMessagesDiv.scrollTop = logMessagesDiv.scrollHeight;
         }
-
+        
+        // --- Carregamento Assíncrono de Dados ---
         async function carregarDadosMunicipios() {
             try {
-                // Alterado para uma URL de CDN mais confiável para evitar problemas de CORS ou 404.
+                // A URL foi trocada por um link de CDN (Content Delivery Network) para maior estabilidade.
                 const response = await fetch('https://cdn.jsdelivr.net/gh/caiquegaspar/conversores-uteis@main/municipios.json');
                 if (!response.ok) {
                     throw new Error(`HTTP error! status: ${response.status}`);
@@ -193,6 +194,7 @@
             }
         }
         
+        // Aguarda o carregamento dos dados antes de continuar a execução
         await carregarDadosMunicipios();
 
         // --- Dicionários de Mapeamento ---
@@ -1028,5 +1030,5 @@ function switchTab(tab) {
     });    
     </script>
 </body>
-
 </html>
+
