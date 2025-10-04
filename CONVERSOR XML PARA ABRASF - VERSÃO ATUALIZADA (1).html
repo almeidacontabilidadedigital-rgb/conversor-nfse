@@ -1,0 +1,1031 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Conversor de XML/TXT para ABRASF 2.01</title>
+    <!-- Tailwind CSS para estilização -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Biblioteca JSZip para criar arquivos .ZIP -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <!-- Bibliotecas jsPDF e jsPDF-AutoTable para gerar relatórios em PDF -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.28/jspdf.plugin.autotable.min.js"></script>
+    <style>
+        /* Estilos adicionais para feedback visual */
+        .tab-button {
+            transition: all 0.3s ease;
+        }
+        .tab-button.active {
+            border-color: #3b82f6;
+            background-color: #3b82f6;
+            color: white;
+            font-weight: 600;
+        }
+        .file-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.5rem;
+            border-radius: 0.375rem;
+            transition: background-color 0.2s;
+        }
+        .file-item:hover {
+            background-color: #f3f4f6;
+        }
+        .file-item-name {
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            margin-right: 1rem;
+        }
+        .drag-drop-area {
+            border: 2px dashed #d1d5db;
+            transition: border-color 0.2s, background-color 0.2s;
+        }
+        .drag-drop-area.drag-over {
+            border-color: #3b82f6;
+            background-color: #eff6ff;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 font-sans">
+
+    <div class="container mx-auto p-4 sm:p-6 lg:p-8 max-w-4xl">
+        <div class="bg-white p-8 rounded-2xl shadow-lg">
+
+            <!-- Cabeçalho -->
+            <div class="text-center mb-8">
+                <h1 class="text-3xl font-bold text-gray-800">Conversor para ABRASF</h1>
+                <p class="text-gray-500 mt-2">Converta seus arquivos XML ou TXT de NFS-e (Nota Fiscal Paulistana) para o padrão ABRASF 2.01.</p>
+            </div>
+
+            <!-- Passo 1: Configuração -->
+            <div class="mb-6">
+                <h2 class="text-xl font-semibold text-gray-700 border-b pb-2 mb-4">Passo 1: Configuração</h2>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                        <label for="cnpjCliente" class="block text-sm font-medium text-gray-600 mb-1">CNPJ da sua empresa</label>
+                        <input type="text" id="cnpjCliente" placeholder="Digite os 14 dígitos do CNPJ" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-600 mb-1">Modo de Geração</label>
+                        <div id="modoGeracao" class="flex space-x-2">
+                            <button data-mode="LOTE" class="flex-1 py-2 px-4 rounded-lg border transition text-gray-600 hover:bg-blue-500 hover:text-white">Em Lote</button>
+                            <button data-mode="INDIVIDUAL" class="flex-1 py-2 px-4 rounded-lg border transition text-gray-600 hover:bg-blue-500 hover:text-white">Individual</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Passo 2: Seleção de Arquivos (com Abas) -->
+            <div class="mb-6">
+                 <h2 class="text-xl font-semibold text-gray-700 border-b pb-2 mb-4">Passo 2: Seleção de Arquivos</h2>
+                <!-- Abas -->
+                <div class="mb-4 flex border-b">
+                    <button id="tab-xml" class="tab-button active py-2 px-4 border-b-2" data-tab="xml">XML</button>
+                    <button id="tab-txt" class="tab-button py-2 px-4 border-b-2" data-tab="txt">TXT (Nota Paulistana)</button>
+                </div>
+
+                <!-- Área de Upload XML -->
+                <div id="upload-xml-area">
+                    <div id="drag-drop-area-xml" class="drag-drop-area relative p-6 text-center rounded-lg cursor-pointer hover:bg-gray-50">
+                        <input type="file" id="xmlFilesInput" multiple accept=".xml" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer">
+                        <div class="flex flex-col items-center justify-center pointer-events-none">
+                            <svg class="w-12 h-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path></svg>
+                            <p class="mt-2 text-sm text-gray-600"><span class="font-semibold text-blue-600">Clique para selecionar</span> ou arraste os arquivos aqui.</p>
+                            <p class="text-xs text-gray-500">Apenas arquivos .XML são permitidos</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Área de Upload TXT -->
+                <div id="upload-txt-area" class="hidden">
+                     <div id="drag-drop-area-txt" class="drag-drop-area relative p-6 text-center rounded-lg cursor-pointer hover:bg-gray-50">
+                        <input type="file" id="txtFilesInput" multiple accept=".txt,.csv" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer">
+                         <div class="flex flex-col items-center justify-center pointer-events-none">
+                            <svg class="w-12 h-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path></svg>
+                            <p class="mt-2 text-sm text-gray-600"><span class="font-semibold text-blue-600">Clique para selecionar</span> ou arraste o arquivo aqui.</p>
+                            <p class="text-xs text-gray-500">Apenas arquivos .TXT (formato Nota Fiscal Paulistana) são permitidos</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="fileList" class="mt-4 space-y-2"></div>
+            </div>
+
+            <!-- Passo 3: Processar -->
+            <div class="text-center">
+                <button id="processarBtn" class="w-full md:w-auto bg-blue-600 text-white font-bold py-3 px-8 rounded-lg hover:bg-blue-700 transition-transform transform hover:scale-105 focus:outline-none focus:ring-4 focus:ring-blue-300 disabled:bg-gray-400 disabled:cursor-not-allowed disabled:transform-none">
+                    Processar Arquivos
+                </button>
+            </div>
+
+            <!-- Passo 4: Resultados -->
+            <div id="resultados" class="mt-8 hidden">
+                <h2 class="text-xl font-semibold text-gray-700 border-b pb-2 mb-4">Passo 4: Resultados</h2>
+                <div id="logMessages" class="bg-gray-50 p-4 rounded-lg max-h-40 overflow-y-auto mb-4 text-sm font-mono"></div>
+                <div id="downloadLinks" class="space-y-3"></div>
+            </div>
+
+        </div>
+        <footer class="text-center mt-6 text-sm text-gray-500">
+            <p>&copy; 2024 Conversor ABRASF. Seus arquivos são processados localmente no seu navegador.</p>
+        </footer>
+    </div>
+
+    <script type="module">
+        // Módulo principal da aplicação
+        window.addEventListener('DOMContentLoaded', async (event) => {
+		const { jsPDF } = window.jspdf;
+
+        // --- Variáveis Globais e Estado da Aplicação ---
+        let modoGeracaoEscolhido = null;
+        let arquivosSelecionados = [];
+        let activeTab = 'xml';
+        let codigosIBGE = {};
+
+        // --- Referências aos Elementos do DOM ---
+        const cnpjInput = document.getElementById('cnpjCliente');
+        const modoGeracaoButtons = document.querySelectorAll('#modoGeracao button');
+        const processarBtn = document.getElementById('processarBtn');
+        const tabXmlBtn = document.getElementById('tab-xml');
+        const tabTxtBtn = document.getElementById('tab-txt');
+        const uploadXmlArea = document.getElementById('upload-xml-area');
+        const uploadTxtArea = document.getElementById('upload-txt-area');
+        const xmlFilesInput = document.getElementById('xmlFilesInput');
+        const txtFilesInput = document.getElementById('txtFilesInput');
+        const dragDropAreaXml = document.getElementById('drag-drop-area-xml');
+        const dragDropAreaTxt = document.getElementById('drag-drop-area-txt');
+        const fileListDiv = document.getElementById('fileList');
+        const resultadosDiv = document.getElementById('resultados');
+        const logMessagesDiv = document.getElementById('logMessages');
+        const downloadLinksDiv = document.getElementById('downloadLinks');
+
+        // --- Funções de UI e Eventos ---
+
+        /** Adiciona uma mensagem ao log na tela. */
+        function log(message, type = 'info') {
+            const colors = {
+                info: 'text-gray-600',
+                error: 'text-red-600 font-bold',
+                success: 'text-green-600 font-bold'
+            };
+            const logEntry = document.createElement('p');
+            logEntry.className = colors[type];
+            logEntry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            logMessagesDiv.appendChild(logEntry);
+            logMessagesDiv.scrollTop = logMessagesDiv.scrollHeight;
+        }
+
+        async function carregarDadosMunicipios() {
+            try {
+                // Alterado para uma URL de CDN mais confiável para evitar problemas de CORS ou 404.
+                const response = await fetch('https://cdn.jsdelivr.net/gh/caiquegaspar/conversores-uteis@main/municipios.json');
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                codigosIBGE = await response.json();
+                console.log('Dados dos municípios carregados com sucesso.');
+            } catch (error) {
+                console.error('Falha ao carregar o arquivo municipios.json:', error);
+                log('Erro crítico: Não foi possível carregar os dados dos municípios. A conversão pode falhar.', 'error');
+            }
+        }
+        
+        await carregarDadosMunicipios();
+
+        // --- Dicionários de Mapeamento ---
+        const mapaServicos = {
+            "01015": "7.02", "01023": "7.02", "01024": "7.02", "01031": "7.04", "01032": "7.04", "01058": "7.05", "01059": "7.05",
+            "01090": "7.15", "01104": "14.13", "01105": "14.13", "01112": "7.02", "01113": "7.02", "01114": "7.02", "01115": "7.04",
+            "01116": "7.05", "01117": "7.15", "01118": "14.13", "01119": "7.17", "01121": "7.18", "01139": "7.11", "01210": "7.01",
+            "01228": "7.06", "01236": "7.07", "01244": "7.08", "01325": "7.09", "01384": "7.10", "01406": "7.10", "01422": "7.10",
+            "01430": "7.11", "01449": "7.11", "01465": "7.13", "01473": "7.16", "01481": "22.01", "01503": "7.01", "01504": "7.01",
+            "01520": "7.01", "01538": "7.01", "01546": "7.01", "01589": "7.01", "01600": "7.01", "01627": "7.01", "01694": "7.03",
+            "01724": "7.12", "01740": "7.14", "01741": "7.14", "01805": "7.17", "01821": "7.18", "01848": "7.18", "01856": "7.18",
+            "01864": "7.19", "01872": "7.20", "01880": "14.02", "01899": "17.03", "01902": "17.08", "01903": "17.08", "02020": "17.08",
+            "02038": "17.16", "02054": "23.01", "02062": "23.01", "02097": "27.01", "02100": "27.01", "02119": "28.01", "02135": "28.01",
+            "02143": "30.01", "02151": "31.01", "02186": "32.01", "02194": "32.01", "02216": "36.01", "02224": "38.01", "02232": "7.03",
+            "02233": "31.01", "02321": "16.01", "02330": "16.01", "02340": "16.01", "02348": "16.01", "02364": "16.01", "02350": "16.02",
+            "02366": "16.02", "02402": "16.01", "02410": "16.01", "02429": "16.01", "02445": "16.01", "02404": "16.02", "02412": "16.02",
+            "02431": "16.02", "02447": "16.02", "02453": "26.01", "02461": "26.01", "02488": "16.01", "02489": "16.02", "02496": "17.06",
+            "02498": "17.24", "02499": "17.24", "02500": "23.01", "02501": "23.01", "02502": "23.01", "02526": "35.01", "02534": "35.01",
+            "02542": "17.06", "02658": "1.01", "02666": "1.02", "02682": "1.03", "02683": "1.01", "02690": "1.04", "02691": "1.04",
+            "02798": "1.05", "02660": "1.01", "02668": "1.02", "02684": "1.03", "02692": "1.04", "02685": "1.01", "02693": "1.04",
+            "02800": "1.05", "02836": "2.01", "02879": "1.06", "02917": "1.07", "02918": "1.07", "02933": "1.08", "02881": "1.06",
+            "02919": "1.07", "02920": "1.07", "02935": "1.08", "02961": "1.09", "02962": "1.09", "02963": "1.09", "2964": "1.09",
+            "2965": "1.09", "2966": "1.09", "03085": "2.01", "03093": "17.01", "03115": "17.01", "03123": "17.02", "03131": "17.02",
+            "03158": "17.02", "03159": "17.02", "03166": "17.02", "2686": "1.09", "03167": "17.02", "03174": "17.02", "03204": "17.11",
+            "03205": "17.11", "03206": "17.11", "03207": "17.11", "03208": "17.11", "03210": "17.11", "03212": "17.11", "03213": "17.11",
+            "03214": "17.11", "03220": "17.13", "03239": "17.13", "03379": "17.13", "03387": "17.14", "03395": "17.15", "03425": "17.15",
+            "03433": "17.15", "03450": "17.17", "03468": "17.17", "03476": "17.18", "03611": "17.18", "03620": "17.18", "03638": "17.18",
+            "03654": "17.19", "03670": "17.19", "03700": "17.19", "03719": "17.20", "03743": "17.22", "03751": "17.23", "03877": "21.01",
+            "03878": "21.01", "03956": "29.01", "03980": "17.01", "03981": "17.11", "04030": "4.01", "04073": "4.01", "04111": "4.01",
+            "04139": "4.02", "04140": "4.02", "04146": "4.02", "04154": "4.02", "04170": "4.03", "04189": "4.03", "04197": "4.03",
+            "04219": "4.03", "04235": "4.03", "04251": "4.04", "04260": "4.05", "04278": "4.05", "04316": "4.06", "04340": "4.06",
+            "04359": "4.06", "04375": "4.06", "04383": "4.07", "04391": "4.08", "04421": "4.08", "04430": "4.08", "04472": "4.08",
+            "04499": "4.08", "04502": "4.08", "04510": "4.08", "04545": "4.08", "04553": "4.08", "04588": "4.09", "04596": "4.09",
+            "04626": "4.10", "04634": "4.11", "04650": "4.11", "04677": "4.11", "04693": "4.12", "04723": "4.12", "04731": "4.12",
+            "04774": "4.13", "04871": "4.13", "04901": "4.13", "05037": "4.14", "05053": "4.14", "05096": "4.14", "05100": "4.15",
+            "05118": "4.16", "05134": "4.16", "05142": "4.16", "05150": "4.17", "05177": "4.17", "05185": "4.17", "05193": "4.18",
+            "05223": "4.19", "05231": "4.20", "05266": "4.21", "05274": "4.22", "05312": "4.23", "05380": "5.01", "05398": "5.01",
+            "05410": "5.01", "05428": "5.02", "05436": "5.03", "05460": "5.04", "05479": "5.05", "05495": "5.06", "05517": "5.07",
+            "05533": "5.09", "05539": "4.07", "05540": "4.10", "05542": "4.03", "05543": "4.22", "05576": "4.02", "05584": "4.17",
+            "05657": "6.04", "05665": "6.04", "05673": "8.01", "05681": "8.01", "05690": "8.01", "05711": "8.01", "05720": "8.01",
+            "05738": "8.02", "05754": "8.02", "05762": "8.02", "05771": "15.01", "05800": "15.01", "05820": "15.01", "05836": "15.01",
+            "05837": "15.01", "05851": "15.09", "05878": "15.02", "05870": "15.03", "05871": "15.04", "05872": "15.05", "05873": "15.06",
+            "05874": "15.07", "05875": "15.08", "05876": "15.10", "05877": "15.10", "05879": "15.11", "05881": "15.13", "05885": "15.17",
+            "05886": "15.18", "05887": "15.14", "05888": "15.12", "05889": "15.12", "05890": "15.15", "05891": "15.15", "05892": "15.16",
+            "05893": "15.16", "05894": "17.11", "05895": "15.10", "05896": "17.11", "05916": "18.01", "05991": "10.09", "06009": "10.09",
+            "06017": "10.10", "06041": "10.10", "06050": "10.01", "06076": "10.01", "06084": "10.01", "06092": "10.01", "06114": "10.01",
+            "06122": "10.01", "06130": "10.01", "06149": "10.01", "06157": "10.02", "06165": "10.02", "06173": "10.03", "06181": "10.03",
+            "06190": "10.04", "06220": "10.04", "06221": "10.04", "06238": "10.04", "06262": "10.04", "06263": "10.04", "06270": "10.05",
+            "06297": "10.05", "06298": "10.05", "06299": "10.05", "06301": "10.05", "06302": "10.05", "06303": "10.05", "06319": "10.05",
+            "06320": "10.05", "06321": "10.05", "06322": "10.05", "06323": "10.05", "06324": "10.05", "06335": "10.06", "06343": "10.06",
+            "06351": "10.07", "06386": "10.07", "06394": "10.08", "06432": "10.08", "06475": "17.04", "06491": "17.05", "06513": "17.05",
+            "06521": "17.07", "06522": "17.07", "06530": "17.12", "06556": "17.12", "06557": "17.12", "06564": "17.21", "06572": "25.01",
+            "06581": "25.02", "06599": "25.02", "06602": "25.03", "06610": "25.04", "06613": "25.05", "06637": "33.01", "06645": "33.01",
+            "06653": "17.04", "06654": "17.07", "06655": "17.04", "06777": "12.13", "06793": "13.01", "06794": "13.01", "06807": "13.02",
+            "06808": "13.02", "06815": "13.03", "06816": "13.03", "06817": "13.03", "06831": "14.07", "06840": "14.07", "06858": "14.08",
+            "06890": "14.08", "06912": "13.04", "06920": "13.04", "06939": "13.04", "06955": "13.04", "06940": "13.04", "06956": "13.04",
+            "06963": "24.01", "06971": "12.13", "06972": "13.01", "06973": "13.02", "06974": "13.03", "07005": "9.01", "07013": "9.01",
+            "07056": "9.01", "07099": "9.01", "07100": "9.01", "07110": "9.02", "07129": "9.02", "07109": "9.02", "07111": "9.02",
+            "07123": "9.02", "07124": "9.02", "07137": "9.03", "07153": "9.03", "07161": "17.09", "07170": "17.09", "07196": "17.10",
+            "07218": "12.17", "07234": "12.17", "07235": "17.10", "07285": "14.06", "07315": "14.06", "07324": "14.14", "07323": "14.06",
+            "07331": "14.01", "07366": "14.01", "07390": "14.01", "07412": "14.01", "07439": "14.01", "07447": "14.01", "07455": "14.01",
+            "07471": "14.01", "07498": "14.01", "07510": "14.01", "07528": "14.01", "07536": "14.01", "07552": "14.03", "07560": "14.04",
+            "07579": "14.05", "07595": "14.09", "07609": "14.09", "07617": "14.10", "07633": "14.10", "07641": "14.11", "07676": "14.12",
+            "07684": "14.03", "07685": "14.01", "07692": "14.01", "07765": "3.01", "07773": "3.02", "07774": "3.02", "07790": "3.03",
+            "07803": "3.04", "07811": "11.01", "07838": "11.01", "07846": "11.01", "07854": "11.01", "07870": "11.02", "07889": "11.02",
+            "07897": "11.03", "07919": "11.03", "07927": "11.04", "07930": "11.05", "07931": "11.05", "07951": "20.01", "07960": "20.02",
+            "07978": "20.03", "08036": "3.01", "08037": "3.02", "08044": "12.04", "08045": "12.01", "08046": "12.05", "08052": "12.01",
+            "08079": "12.02", "08080": "12.02", "08087": "12.03", "08095": "12.04", "08117": "12.05", "08125": "12.06", "08133": "12.07",
+            "08168": "12.07", "08176": "12.08", "08192": "12.10", "08206": "12.11", "08210": "12.11", "08211": "12.11", "08214": "12.15",
+            "08257": "12.05", "08272": "12.11", "08273": "12.02", "08274": "12.01", "08281": "12.11", "08290": "12.11", "08230": "12.16",
+            "08311": "12.09", "08320": "12.09", "08338": "12.09", "08354": "12.09", "08362": "12.09", "08370": "12.09", "08397": "12.09",
+            "08400": "12.12", "08419": "12.14", "08478": "19.01", "08486": "19.01", "08479": "19.01", "08480": "19.01", "08482": "19.01",
+            "08483": "19.01", "8487": "19.01", "08488": "19.01", "08494": "6.01", "08516": "6.02", "08532": "6.03", "08567": "6.05",
+            "08575": "6.01", "08658": "6.06", "08659": "6.06", "08648": "5.08", "08656": "5.08", "08664": "34.01", "08672": "34.01",
+            "08770": "37.01", "08842": "37.01", "08850": "37.01", "08885": "39.01", "08893": "40.01", "08899": "34.01"
+        };
+        
+/** Troca a aba ativa (XML/TXT). */
+function switchTab(tab) {
+            activeTab = tab;
+            if (tab === 'xml') {
+                tabXmlBtn.classList.add('active');
+                tabTxtBtn.classList.remove('active');
+                uploadXmlArea.classList.remove('hidden');
+                uploadTxtArea.classList.add('hidden');
+                document.getElementById('xmlFilesInput').value = null; // Limpa o input
+            } else { // Tab 'txt'
+                tabXmlBtn.classList.remove('active');
+                tabTxtBtn.classList.add('active');
+                uploadXmlArea.classList.add('hidden'); // Oculta a área XML
+                uploadTxtArea.classList.remove('hidden'); // Exibe a área TXT
+                document.getElementById('txtFilesInput').value = null; // Limpa o input
+            }
+            arquivosSelecionados = [];
+            atualizarListaArquivos();
+        }
+
+        /** Atualiza o estado do botão 'Processar'. */
+        function atualizarEstadoBotao() {
+            const cnpjValido = cnpjInput.value.replace(/\D/g, '').length === 14;
+            processarBtn.disabled = !(cnpjValido && modoGeracaoEscolhido && arquivosSelecionados.length > 0);
+        }
+
+        /** Atualiza a lista de arquivos exibida na tela. */
+        function atualizarListaArquivos() {
+            fileListDiv.innerHTML = '';
+            if (arquivosSelecionados.length === 0) {
+                fileListDiv.innerHTML = '<p class="text-center text-sm text-gray-500">Nenhum arquivo selecionado.</p>';
+            } else {
+                arquivosSelecionados.forEach((file, index) => {
+                    const fileItem = document.createElement('div');
+                    fileItem.className = 'file-item bg-gray-50';
+                    fileItem.innerHTML = `
+                        <div class="flex items-center min-w-0">
+                           <svg class="w-5 h-5 text-gray-500 mr-3 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"></path></svg>
+                           <span class="file-item-name text-sm text-gray-700">${file.name}</span>
+                        </div>
+                        <button data-index="${index}" class="remove-file-btn text-red-500 hover:text-red-700 p-1 rounded-full">
+                            <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd"></path></svg>
+                        </button>
+                    `;
+                    fileListDiv.appendChild(fileItem);
+                });
+            }
+            atualizarEstadoBotao();
+        }
+
+        // --- Funções Utilitárias ---
+
+        function readFileAsText(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                    try {
+                        // Tenta decodificar como UTF-8 primeiro
+                        const utf8Decoder = new TextDecoder('utf-8');
+                        const text = utf8Decoder.decode(event.target.result);
+                        resolve(text);
+                    } catch (e) {
+                        // Se falhar, tenta com ISO-8859-1 (Latin-1)
+                        const latin1Decoder = new TextDecoder('iso-8859-1');
+                        const text = latin1Decoder.decode(event.target.result);
+                        resolve(text);
+                    }
+                };
+                reader.onerror = (error) => reject(error);
+                reader.readAsArrayBuffer(file);
+            });
+        }
+        
+        function normalizeString(text) {
+            if (!text) return "";
+            return text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().trim();
+        }
+        
+        function findIBGECode(cidade, uf) {
+            if (!cidade || !uf) return "";
+            const chave = `${normalizeString(cidade)}|${uf.toUpperCase()}`;
+            const code = codigosIBGE[chave];
+            if (!code) {
+                log(`Código IBGE não encontrado para ${cidade}-${uf} na lista local.`, 'error');
+            }
+            return code || "";
+        }
+
+        function getNodeText(parentNode, selector, defaultValue = "") {
+            // Suporte para seletores de tag simples (mais rápido)
+            if (/^[a-zA-Z0-9_]+$/.test(selector)) {
+                const elements = parentNode.getElementsByTagName(selector);
+                if (elements && elements.length > 0 && elements[0]) {
+                    return elements[0].textContent.trim();
+                }
+                return defaultValue;
+            }
+            // Suporte para seletores CSS
+            const node = parentNode.querySelector(selector);
+            return node ? node.textContent.trim() : defaultValue;
+        }
+        
+        function safeParseFloat(value) {
+            if (typeof value !== 'string') value = String(value || '0');
+             // Remove pontos de milhar e substitui vírgula decimal por ponto
+            return parseFloat(value.replace(/\./g, '').replace(',', '.')) || 0;
+        }
+
+       function formatCurrency(value) {
+            return value.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        }
+
+        function convertToAbrasfDate(dataOriginal) {
+            if (!dataOriginal || dataOriginal.startsWith("0000")) return "";
+            try {
+                // Tenta formato ISO 8601 (YYYY-MM-DDTHH:mm:ss)
+                let date = new Date(dataOriginal.replace(" ", "T"));
+                if (!isNaN(date.getTime())) {
+                    return date.toISOString().slice(0, 19);
+                }
+                
+                // Tenta formato DD/MM/YYYY HH:mm:ss
+                const parts = dataOriginal.match(/(\d{2})\/(\d{2})\/(\d{4})(?:[ T](\d{2}):(\d{2}):(\d{2}))?/);
+                if (parts) {
+                    const [, day, month, year, hour = '00', minute = '00', second = '00'] = parts;
+                    // O construtor Date do JS usa mês 0-11
+                    date = new Date(Date.UTC(year, month - 1, day, hour, minute, second));
+                    if (!isNaN(date.getTime())) {
+                        return date.toISOString().slice(0, 19);
+                    }
+                }
+                return "";
+            } catch (e) {
+                console.error("Erro ao converter data:", dataOriginal, e);
+                return "";
+            }
+        }
+        
+        function escapeXML(text) {
+            if (typeof text !== 'string') return '';
+            return text.replace(/[<>&"']/g, (c) => {
+                switch (c) {
+                    case '<': return '&lt;';
+                    case '>': return '&gt;';
+                    case '&': return '&amp;';
+                    case '"': return '&quot;';
+                    case "'": return '&apos;';
+                }
+            });
+        }
+        
+        // --- Funções de Mapeamento de Dados ---
+
+        function mapearXmlParaPadronizado(noNota, formato) {
+            const prestadorCnpj = getNodeText(noNota, formato === 'CG' ? 'PRESTADOR_CPF_CNPJ' : 'Prestador > CnpjCpf').replace(/\D/g, '');
+            const tomadorCnpj = getNodeText(noNota, formato === 'CG' ? 'TOMADOR_CPF_CNPJ' : 'Tomador > CnpjCpf').replace(/\D/g, '');
+            const situacao = (formato === "CG" 
+                ? getNodeText(noNota, 'SITUACAO_NF').toUpperCase() 
+                : (getNodeText(noNota, 'SituacaoNFe') === '2' || getNodeText(noNota, 'StatusNFe') === 'Cancelada' ? "CANCELADA" : "NORMAL"));
+            
+            const prestadorCidade = getNodeText(noNota, formato === 'CG' ? 'PRESTADOR_CIDADE' : 'Prestador > Municipio');
+            const prestadorUf = getNodeText(noNota, formato === 'CG' ? 'PRESTADOR_UF' : 'Prestador > UfSigla');
+            const tomadorCidade = getNodeText(noNota, formato === 'CG' ? 'TOMADOR_CIDADE' : 'Tomador > Municipio');
+            const tomadorUf = getNodeText(noNota, formato === 'CG' ? 'TOMADOR_UF' : 'Tomador > UfSigla');
+            const prestacaoCidade = getNodeText(noNota, formato === 'CG' ? 'CIDADE_PRESTACAO' : 'MunicipioPrestacao');
+            const prestacaoUf = getNodeText(noNota, formato === 'CG' ? 'UF_PRESTACAO' : 'UfPrestacao');
+            
+            const issRetidoCG = safeParseFloat(getNodeText(noNota, "VALOR_ISS_RET", "0"));
+            const codServicoOriginal = getNodeText(noNota, formato === 'CG' ? "COS_SERVICO" : "CodigoItemLei116");
+
+            return {
+                numero: getNodeText(noNota, formato === 'CG' ? "NUM_NOTA" : "NumeroNFe"),
+                codigoVerificacao: getNodeText(noNota, formato === 'CG' ? "CODIGO_VERIFICACAO" : "CodigoVerificador"),
+                dataEmissao: getNodeText(noNota, formato === 'CG' ? "DATA_HORA_EMISSAO" : "DataEmissaoNFe"),
+                dataCancelamento: getNodeText(noNota, 'DATA_HORA_CANCELAMENTO', ''),
+                discriminacao: getNodeText(noNota, formato === 'CG' ? "DESCRICAO_NOTA" : "Discriminacao"),
+                valorServico: safeParseFloat(getNodeText(noNota, formato === 'CG' ? "VALOR_SERVICO" : "ValorNFe")),
+                aliquota: safeParseFloat(getNodeText(noNota, formato === 'CG' ? "ALIQUOTA" : "AliquotaIss")),
+                valorIss: safeParseFloat(getNodeText(noNota, formato === 'CG' ? "VALOR_ISS" : "ValorISS")),
+                prestadorCnpj: prestadorCnpj,
+                prestadorIM: getNodeText(noNota, formato === 'CG' ? "PRESTADOR_INSCRICAO_MUNICIPAL" : "Prestador > InscricaoMunicipal"),
+                prestadorRazao: getNodeText(noNota, formato === 'CG' ? "PRESTADOR_RAZAO_SOCIAL" : "Prestador > RazaoSocialNome"),
+                prestadorEnd: getNodeText(noNota, formato === 'CG' ? "PRESTADOR_LOGRADOURO" : "Prestador > Logradouro"),
+                prestadorNum: getNodeText(noNota, formato === 'CG' ? "PRESTADOR_PREST_NUMERO" : "Prestador > Numero"),
+                prestadorComp: getNodeText(noNota, formato === 'CG' ? "PRESTADOR_COMPLEMENTO" : "Prestador > Complemento"),
+                prestadorBairro: getNodeText(noNota, formato === 'CG' ? "PRESTADOR_BAIRRO" : "Prestador > Bairro"),
+                prestadorCodMun: findIBGECode(prestadorCidade, prestadorUf),
+                prestadorUF: prestadorUf,
+                prestadorCEP: getNodeText(noNota, formato === 'CG' ? "PRESTADOR_CEP" : "Prestador > Cep").replace(/\D/g, ''),
+                competencia: getNodeText(noNota, formato === 'CG' ? "MES_COMPETENCIA" : "DataCompetenciaNFe"),
+                valorDeducao: safeParseFloat(getNodeText(noNota, formato === 'CG' ? "VALOR_DEDUCAO" : "0")),
+                valorPIS: safeParseFloat(getNodeText(noNota, formato === 'CG' ? "VALOR_PIS" : "ValorPIS")),
+                valorCOFINS: safeParseFloat(getNodeText(noNota, formato === 'CG' ? "VALOR_COFINS" : "ValorCOFINS")),
+                valorINSS: safeParseFloat(getNodeText(noNota, formato === 'CG' ? "VALOR_INSS" : "ValorINSS")),
+                valorIR: safeParseFloat(getNodeText(noNota, formato === 'CG' ? "VALOR_IR" : "ValorIRRF")),
+                valorCSLL: safeParseFloat(getNodeText(noNota, formato === 'CG' ? "VALOR_CSLL" : "ValorCSLL")),
+                issRetido: (formato === 'CG' ? (issRetidoCG > 0 ? "1" : "2") : (getNodeText(noNota, "ISSRetido", "0") === "1" ? "1" : "2")),
+                valorIssRetido: issRetidoCG > 0 ? issRetidoCG : (getNodeText(noNota, "ISSRetido", "0") === "1" ? safeParseFloat(getNodeText(noNota, "ValorISS")) : 0),
+                exigibilidadeISS: (formato === 'CG' ? (normalizeString(prestacaoCidade) === normalizeString(prestadorCidade) || prestacaoCidade === "" ? "1" : "2") : "1"),
+                itemLista: mapaServicos[codServicoOriginal] || codServicoOriginal,
+                codCnae: getNodeText(noNota, formato === 'CG' ? "CODIGO_ATIVIDADE" : "Prestador > CodigoCnaePrincipal"),
+                codMunPrestacao: findIBGECode(prestacaoCidade, prestacaoUf),
+                prestacaoLocal: `${prestacaoCidade} - ${prestacaoUf}`,
+                tomadorDoc: tomadorCnpj,
+                tomadorRazao: getNodeText(noNota, formato === 'CG' ? "TOMADOR_RAZAO_SOCIAL" : "Tomador > RazaoSocialNome"),
+                tomadorEnd: getNodeText(noNota, formato === 'CG' ? "TOMADOR_LOGRADOURO" : "Tomador > Logradouro"),
+                tomadorNum: getNodeText(noNota, formato === 'CG' ? "TOMADOR_NUMERO" : "Tomador > Numero"),
+                tomadorComp: getNodeText(noNota, formato === 'CG' ? "TOMADOR_COMPLEMENTO" : "Tomador > Complemento"),
+                tomadorBairro: getNodeText(noNota, formato === 'CG' ? "TOMADOR_BAIRRO" : "Tomador > Bairro"),
+                tomadorCodMun: findIBGECode(tomadorCidade, tomadorUf),
+                tomadorUF: tomadorUf,
+                tomadorCEP: getNodeText(noNota, formato === 'CG' ? "TOMADOR_CEP" : "Tomador > Cep").replace(/\D/g, ''),
+                tomadorEmail: getNodeText(noNota, formato === 'CG' ? "TOMADOR_EMAIL" : "Tomador > Email"),
+                optanteSimples: (formato === 'CG' ? (getNodeText(noNota, "TRIBUTACAO_PRESTACAO") === "H" ? "1" : "2") : (getNodeText(noNota, "PrestadorOptanteSimplesNacional", "0") === "1" ? "1" : "2")),
+                situacao: situacao,
+                valorLiquido: safeParseFloat(getNodeText(noNota, formato === 'CG' ? "0" : "ValorLiquidoNFe")),
+            };
+        }
+
+        function mapearTxtParaPadronizado(notaTxt) {
+             const prestadorCidade = notaTxt["Cidade do Prestador"];
+             const prestadorUf = notaTxt["UF do Prestador"];
+             const tomadorCidade = notaTxt["Cidade do Tomador"];
+             const tomadorUf = notaTxt["UF do Tomador"];
+             const codServicoOriginal = notaTxt["Código do Serviço Prestado na Nota Fiscal"];
+
+            let situacao = "NORMAL";
+            if (notaTxt["Situação da Nota Fiscal"]?.toUpperCase() === 'C' || notaTxt["Situação da Nota Fiscal"]?.toUpperCase() === 'CANCELADA') {
+                situacao = "CANCELADA";
+            } else if (notaTxt["Situação da Nota Fiscal"]?.toUpperCase() === 'S') {
+                situacao = "SUBSTITUIDA";
+            }
+             
+            const valorServico = safeParseFloat(notaTxt["Valor dos Serviços"]);
+            const valorIR = safeParseFloat(notaTxt["IR"]);
+            const valorPIS = safeParseFloat(notaTxt["PIS/PASEP"]);
+            const valorCOFINS = safeParseFloat(notaTxt["COFINS"]);
+            const valorCSLL = safeParseFloat(notaTxt["CSLL"]);
+            const valorINSS = safeParseFloat(notaTxt["INSS"]);
+            const valorDeducao = safeParseFloat(notaTxt["Valor das Deduções"]);
+            const valorIss = safeParseFloat(notaTxt["ISS devido"]);
+            const isIssRetido = notaTxt["ISS Retido"]?.toUpperCase() === 'S';
+            const valorIssRetido = isIssRetido ? valorIss : 0;
+            const valorLiquido = valorServico - valorIR - valorPIS - valorCOFINS - valorCSLL - valorINSS - valorIssRetido - valorDeducao;
+
+            const prestadorCodMun = findIBGECode(prestadorCidade, prestadorUf);
+            let codMunPrestacao = notaTxt["Município Prestação - cód. IBGE"];
+            if (!codMunPrestacao || codMunPrestacao === '0') {
+                codMunPrestacao = prestadorCodMun;
+            }
+
+            return {
+                numero: notaTxt["Nº NFS-e"],
+                codigoVerificacao: notaTxt["Código de Verificação da NFS-e"],
+                dataEmissao: notaTxt["Data Hora NFE"],
+                dataCancelamento: notaTxt["Data de Cancelamento"],
+                discriminacao: notaTxt["Discriminação dos Serviços"],
+                valorServico: valorServico,
+                aliquota: safeParseFloat(notaTxt["Alíquota"]),
+                valorIss: valorIss,
+                prestadorCnpj: notaTxt["CPF/CNPJ do Prestador"]?.replace(/\D/g, ''),
+                prestadorIM: notaTxt["Inscrição Municipal do Prestador"],
+                prestadorRazao: notaTxt["Razão Social do Prestador"],
+                prestadorEnd: notaTxt["Endereço do Prestador"],
+                prestadorNum: notaTxt["Número do Endereço do Prestador"],
+                prestadorComp: notaTxt["Complemento do Endereço do Prestador"],
+                prestadorBairro: notaTxt["Bairro do Prestador"],
+                prestadorCodMun: prestadorCodMun,
+                prestadorUF: prestadorUf,
+                prestadorCEP: notaTxt["CEP do Prestador"]?.replace(/\D/g, ''),
+                competencia: notaTxt["Data do Fato Gerador"],
+                valorDeducao: valorDeducao,
+                valorPIS: valorPIS,
+                valorCOFINS: valorCOFINS,
+                valorINSS: valorINSS,
+                valorIR: valorIR,
+                valorCSLL: valorCSLL,
+                issRetido: isIssRetido ? "1" : "2",
+                valorIssRetido: valorIssRetido,
+                exigibilidadeISS: "1", 
+                itemLista: mapaServicos[codServicoOriginal] || codServicoOriginal,
+                codCnae: '', 
+                codMunPrestacao: codMunPrestacao,
+                prestacaoLocal: '', // O TXT não informa o nome da cidade de prestação
+                tomadorDoc: notaTxt["CPF/CNPJ do Tomador"]?.replace(/\D/g, ''),
+                tomadorRazao: notaTxt["Razão Social do Tomador"],
+                tomadorEnd: notaTxt["Endereço do Tomador"],
+                tomadorNum: notaTxt["Número do Endereço do Tomador"],
+                tomadorComp: notaTxt["Complemento do Endereço do Tomador"],
+                tomadorBairro: notaTxt["Bairro do Tomador"],
+                tomadorCodMun: findIBGECode(tomadorCidade, tomadorUf),
+                tomadorUF: tomadorUf,
+                tomadorCEP: notaTxt["CEP do Tomador"]?.replace(/\D/g, ''),
+                tomadorEmail: notaTxt["Email do Tomador"],
+                optanteSimples: notaTxt["Opção Pelo Simples"] === '1' ? "1" : "2",
+                situacao: situacao,
+                valorLiquido: valorLiquido,
+            };
+        }
+
+        // --- Funções de Geração de Arquivos ---
+
+        function triggerDownload(blob, filename) {
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            log(`Arquivo "${filename}" gerado e pronto para download.`, 'success');
+
+            const linkDiv = document.createElement('div');
+            linkDiv.className = 'bg-blue-50 p-3 rounded-lg flex items-center justify-between';
+            linkDiv.innerHTML = `
+                <div class="flex items-center">
+                    <svg class="w-6 h-6 text-blue-600 mr-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                    <span class="font-medium text-blue-800">${filename}</span>
+                </div>
+                <a href="${url}" download="${filename}" class="bg-blue-600 text-white text-sm font-semibold py-1 px-3 rounded-md hover:bg-blue-700 transition">Download</a>
+            `;
+            downloadLinksDiv.appendChild(linkDiv);
+        }
+
+        function gerarXML_CompNfse(nota) {
+            let outrasInfo = '';
+            let descricaoPrincipal = nota.discriminacao || '';
+            if(descricaoPrincipal) {
+                const tribAproxIndex = descricaoPrincipal.toLowerCase().indexOf("trib aprox");
+                if (tribAproxIndex > -1) {
+                    outrasInfo = descricaoPrincipal.substring(tribAproxIndex);
+                    descricaoPrincipal = descricaoPrincipal.substring(0, tribAproxIndex).trim();
+                }
+            }
+            
+            let competenciaFormatada = '';
+            if (nota.competencia && nota.competencia.includes('/')) {
+                const parts = nota.competencia.split(' ')[0].split('/');
+                if(parts.length === 3) {
+                    competenciaFormatada = `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+                }
+            } else if (nota.competencia && nota.competencia.includes('-')) {
+                competenciaFormatada = nota.competencia.split('T')[0];
+            }
+            
+            let valorLiquido = nota.valorLiquido;
+             if(activeTab === 'xml' && valorLiquido === 0) { // Recalcula para XML se não veio pronto (caso do XML CG)
+                valorLiquido = nota.valorServico - nota.valorIR - nota.valorPIS - nota.valorCOFINS - nota.valorCSLL - nota.valorINSS - nota.valorIssRetido - nota.valorDeducao;
+            }
+
+            let xml = `<CompNfse xmlns="http://www.abrasf.org.br/nfse.xsd">
+    <Nfse versao="2.01">
+        <InfNfse>
+            <Numero>${nota.numero}</Numero>
+            <CodigoVerificacao>${nota.codigoVerificacao}</CodigoVerificacao>
+            <DataEmissao>${convertToAbrasfDate(nota.dataEmissao)}</DataEmissao>
+            ${outrasInfo ? `<OutrasInformacoes>${escapeXML(outrasInfo)}</OutrasInformacoes>` : ''}
+            <ValoresNfse>
+                <BaseCalculo>${nota.valorServico.toFixed(2)}</BaseCalculo>
+                <Aliquota>${(nota.aliquota).toFixed(2)}</Aliquota>
+                <ValorIss>${nota.valorIss.toFixed(2)}</ValorIss>
+                <ValorLiquidoNfse>${valorLiquido.toFixed(2)}</ValorLiquidoNfse>
+            </ValoresNfse>
+            <PrestadorServico>
+                <IdentificacaoPrestador>
+                    <CpfCnpj><Cnpj>${nota.prestadorCnpj}</Cnpj></CpfCnpj>
+                    <InscricaoMunicipal>${nota.prestadorIM}</InscricaoMunicipal>
+                </IdentificacaoPrestador>
+                <RazaoSocial>${escapeXML(nota.prestadorRazao)}</RazaoSocial>
+                <Endereco>
+                    <Endereco>${escapeXML(nota.prestadorEnd)}</Endereco>
+                    <Numero>${nota.prestadorNum}</Numero>
+                    ${nota.prestadorComp ? `<Complemento>${escapeXML(nota.prestadorComp)}</Complemento>` : ''}
+                    <Bairro>${escapeXML(nota.prestadorBairro)}</Bairro>
+                    <CodigoMunicipio>${nota.prestadorCodMun}</CodigoMunicipio>
+                    <Uf>${nota.prestadorUF}</Uf>
+                    <Cep>${nota.prestadorCEP}</Cep>
+                </Endereco>
+            </PrestadorServico>
+            <OrgaoGerador>
+                <CodigoMunicipio>${nota.prestadorCodMun}</CodigoMunicipio>
+                <Uf>${nota.prestadorUF}</Uf>
+            </OrgaoGerador>
+            <DeclaracaoPrestacaoServico>
+                <InfDeclaracaoPrestacaoServico>
+                    <Competencia>${competenciaFormatada}</Competencia>
+                    <Servico>
+                        <Valores>
+                            <ValorServicos>${nota.valorServico.toFixed(2)}</ValorServicos>
+                            <ValorDeducoes>${nota.valorDeducao.toFixed(2)}</ValorDeducoes>
+                            <ValorPis>${nota.valorPIS.toFixed(2)}</ValorPis>
+                            <ValorCofins>${nota.valorCOFINS.toFixed(2)}</ValorCofins>
+                            <ValorInss>${nota.valorINSS.toFixed(2)}</ValorInss>
+                            <ValorIr>${nota.valorIR.toFixed(2)}</ValorIr>
+                            <ValorCsll>${nota.valorCSLL.toFixed(2)}</ValorCsll>
+                            <ValorIss>${nota.valorIss.toFixed(2)}</ValorIss>
+                            <Aliquota>${(nota.aliquota).toFixed(2)}</Aliquota>
+                        </Valores>
+                        <IssRetido>${nota.issRetido}</IssRetido>
+                        <ExigibilidadeISS>${nota.exigibilidadeISS}</ExigibilidadeISS>
+                        <ItemListaServico>${nota.itemLista}</ItemListaServico>
+                        ${nota.codCnae ? `<CodigoCnae>${nota.codCnae}</CodigoCnae>` : ''}
+                        <Discriminacao>${escapeXML(descricaoPrincipal)}</Discriminacao>
+                        <CodigoMunicipio>${nota.codMunPrestacao}</CodigoMunicipio>
+                        <MunicipioIncidencia>${nota.codMunPrestacao}</MunicipioIncidencia>
+                    </Servico>
+                    <Tomador>
+                        <IdentificacaoTomador>
+                            ${nota.tomadorDoc && nota.tomadorDoc.length === 11 ? `<CpfCnpj><Cpf>${nota.tomadorDoc}</Cpf></CpfCnpj>` : ''}
+                            ${nota.tomadorDoc && nota.tomadorDoc.length === 14 ? `<CpfCnpj><Cnpj>${nota.tomadorDoc}</Cnpj></CpfCnpj>` : ''}
+                        </IdentificacaoTomador>
+                        <RazaoSocial>${escapeXML(nota.tomadorRazao)}</RazaoSocial>
+                        <Endereco>
+                            <Endereco>${escapeXML(nota.tomadorEnd)}</Endereco>
+                            <Numero>${nota.tomadorNum}</Numero>
+                            ${nota.tomadorComp ? `<Complemento>${escapeXML(nota.tomadorComp)}</Complemento>` : ''}
+                            <Bairro>${escapeXML(nota.tomadorBairro)}</Bairro>
+                            <CodigoMunicipio>${nota.tomadorCodMun}</CodigoMunicipio>
+                            <Uf>${nota.tomadorUF}</Uf>
+                            <Cep>${nota.tomadorCEP}</Cep>
+                        </Endereco>
+                        ${nota.tomadorEmail ? `<Contato><Email>${nota.tomadorEmail}</Email></Contato>` : ''}
+                    </Tomador>
+                    <OptanteSimplesNacional>${nota.optanteSimples}</OptanteSimplesNacional>
+                    <IncentivoFiscal>2</IncentivoFiscal>
+                </InfDeclaracaoPrestacaoServico>
+            </DeclaracaoPrestacaoServico>
+        </InfNfse>
+    </Nfse>
+</CompNfse>`;
+            return xml;
+        }
+
+        function gerarXML_PedidoCancelamento(nota) {
+            return `<Pedido>
+    <InfPedidoCancelamento>
+        <IdentificacaoNfse>
+            <Numero>${nota.numero}</Numero>
+            <CpfCnpj>
+                <Cnpj>${nota.prestadorCnpj}</Cnpj>
+            </CpfCnpj>
+            <InscricaoMunicipal>${nota.prestadorIM}</InscricaoMunicipal>
+            <CodigoMunicipio>${nota.prestadorCodMun}</CodigoMunicipio>
+        </IdentificacaoNfse>
+        <CodigoCancelamento>0001</CodigoCancelamento>
+    </InfPedidoCancelamento>
+</Pedido>`;
+        }
+        
+        function gerarRelatorioPDF(colNotas, tituloRelatorio, nomeArquivo, isCancelada) {
+            if (colNotas.length === 0) return;
+
+            const doc = new jsPDF({ orientation: 'landscape' });
+            
+            if (isCancelada) {
+                const head = [['Nº NFS-e', 'Data Emissão', 'Local da Prestação', 'Data Cancelamento', 'Status']];
+                const body = colNotas.map(nota => [
+                    nota.numero,
+                    (nota.dataEmissao || '').split(' ')[0],
+                    nota.prestacaoLocal,
+                    (nota.dataCancelamento || '').split(' ')[0],
+                    'Cancelada'
+                ]);
+                 doc.autoTable({
+                    head: head,
+                    body: body,
+                    startY: 25,
+                    theme: 'striped',
+                    headStyles: { fillColor: [41, 128, 185], textColor: 255, fontStyle: 'bold' },
+                    styles: { fontSize: 8 },
+                    didDrawPage: data => doc.text(tituloRelatorio, data.settings.margin.left, 20)
+                });
+            } else {
+                const head = [['Nº NFS-e', 'Data emissão', 'Local da Prestação', 'Valor do serviço', 'Base de cálculo ISS Normal', 'Alíquota ISS', 'Valor ISS', 'Valor IR Retido', 'Valor PIS Retido', 'Valor COFINS Retido', 'Valor CSLL Retido', 'Valor INSS Retido', 'Outros Valores', 'Base de Cálculo ISS Retido', 'Valor ISS Retido', 'Valor Líquido NFS-e', 'Status', 'Cód serviço']];
+                let totais = { valServ: 0, baseNorm: 0, issNorm: 0, ir: 0, pis: 0, cofins: 0, csll: 0, inss: 0, outros: 0, baseRet: 0, issRet: 0, liq: 0 };
+
+                const body = colNotas.map(nota => {
+                    const baseCalculoNormal = nota.issRetido === "1" ? 0 : nota.valorServico;
+                    const vlrIssNormal = nota.issRetido === "1" ? 0 : nota.valorIss;
+                    const baseCalculoRetido = nota.issRetido === "1" ? nota.valorServico : 0;
+                    
+                    totais.valServ += nota.valorServico;
+                    totais.baseNorm += baseCalculoNormal;
+                    totais.issNorm += vlrIssNormal;
+                    totais.ir += nota.valorIR;
+                    totais.pis += nota.valorPIS;
+                    totais.cofins += nota.valorCOFINS;
+                    totais.csll += nota.valorCSLL;
+                    totais.inss += nota.valorINSS;
+                    totais.outros += nota.valorDeducao;
+                    totais.baseRet += baseCalculoRetido;
+                    totais.issRet += nota.valorIssRetido;
+                    totais.liq += nota.valorLiquido;
+
+                    return [
+                        nota.numero, (nota.dataEmissao || '').split(' ')[0], nota.prestacaoLocal, formatCurrency(nota.valorServico),
+                        formatCurrency(baseCalculoNormal), `${(nota.aliquota || 0).toFixed(2)}%`, formatCurrency(vlrIssNormal),
+                        formatCurrency(nota.valorIR), formatCurrency(nota.valorPIS), formatCurrency(nota.valorCOFINS), formatCurrency(nota.valorCSLL), formatCurrency(nota.valorINSS),
+                        formatCurrency(nota.valorDeducao), formatCurrency(baseCalculoRetido), formatCurrency(nota.valorIssRetido),
+                        formatCurrency(nota.valorLiquido), 'Autorizada', nota.itemLista
+                    ];
+                });
+                
+                const foot = [[
+                    { content: 'TOTAIS', colSpan: 3, styles: { halign: 'right', fontStyle: 'bold' } },
+                    formatCurrency(totais.valServ), formatCurrency(totais.baseNorm), '', formatCurrency(totais.issNorm),
+                    formatCurrency(totais.ir), formatCurrency(totais.pis), formatCurrency(totais.cofins), formatCurrency(totais.csll), formatCurrency(totais.inss),
+                    formatCurrency(totais.outros), formatCurrency(totais.baseRet), formatCurrency(totais.issRet),
+                    formatCurrency(totais.liq), '', ''
+                ]];
+
+                doc.autoTable({
+                    head: head, body: body, foot: foot, startY: 25, theme: 'striped',
+                    headStyles: { fillColor: [41, 128, 185], textColor: 255, fontStyle: 'bold' },
+                    footStyles: { fillColor: [232, 232, 232], textColor: 0, fontStyle: 'bold' },
+                    styles: { fontSize: 6.5, cellPadding: 1.5 },
+                    didDrawPage: data => doc.text(tituloRelatorio, data.settings.margin.left, 20)
+                });
+            }
+            
+            triggerDownload(doc.output('blob'), nomeArquivo);
+        }
+
+        // --- Lógica Principal de Processamento ---
+
+        async function processarArquivos() {
+            processarBtn.disabled = true;
+            processarBtn.textContent = 'Processando...';
+            resultadosDiv.classList.remove('hidden');
+            logMessagesDiv.innerHTML = '';
+            downloadLinksDiv.innerHTML = '';
+            
+            log('Iniciando processamento...');
+            const cnpjCliente = cnpjInput.value;
+
+            const fileContents = await Promise.all(
+                arquivosSelecionados.map(file => readFileAsText(file))
+            );
+
+            log(`Carregados ${fileContents.length} arquivos na memória.`);
+
+            let notasConsolidadas = [];
+            const isTxt = activeTab === 'txt';
+
+            if (isTxt) {
+                // Processamento de TXT
+                for (let i = 0; i < fileContents.length; i++) {
+                    let content = fileContents[i];
+                    // FIX: Strip BOM (Byte Order Mark) if present, which can break header parsing
+                    if (content.charCodeAt(0) === 0xFEFF) {
+                        content = content.slice(1);
+                    }
+                    const lines = content.split(/\r?\n/).filter(line => line.trim() !== '');
+                    if (lines.length < 2) {
+                        log(`Arquivo "${arquivosSelecionados[i].name}" está vazio ou não tem dados.`, 'error');
+                        continue;
+                    }
+                    const headers = lines[0].split('\t');
+                    for (let j = 1; j < lines.length; j++) {
+                        const values = lines[j].split('\t');
+                        // Ignora a linha de total
+                        if(values[0]?.toLowerCase() === 'total') continue;
+
+                        const notaObj = {};
+                        headers.forEach((header, index) => {
+                            notaObj[header.trim()] = values[index]?.trim() || '';
+                        });
+                        notasConsolidadas.push(mapearTxtParaPadronizado(notaObj));
+                    }
+                }
+
+            } else {
+                // Processamento de XML
+                const parser = new DOMParser();
+                let formatoPrimeiroArquivo = null;
+
+                for (let i = 0; i < fileContents.length; i++) {
+                    const xmlString = fileContents[i];
+                    const xmlDoc = parser.parseFromString(xmlString, "application/xml");
+                    
+                    if (xmlDoc.getElementsByTagName("parsererror").length) {
+                        log(`Erro de sintaxe no arquivo "${arquivosSelecionados[i].name}". Ignorado.`, 'error');
+                        continue;
+                    }
+
+                    let formatoOrigem, listaNotas;
+                    if (xmlDoc.querySelector("NOTA_FISCAL")) {
+                        formatoOrigem = "CG";
+                        listaNotas = xmlDoc.querySelectorAll("NOTA_FISCAL");
+                    } else if (xmlDoc.querySelector("NFe")) {
+                        formatoOrigem = "SIMPLISS"; // Simplificado, ambos usam a mesma base
+                        listaNotas = xmlDoc.querySelectorAll("NFe");
+                    } else {
+                        log(`Formato não reconhecido no arquivo "${arquivosSelecionados[i].name}". Ignorado.`, 'error');
+                        continue;
+                    }
+
+                    if (!formatoPrimeiroArquivo) formatoPrimeiroArquivo = formatoOrigem;
+                    else if (formatoPrimeiroArquivo !== formatoOrigem) {
+                        log(`ERRO: Mistura de formatos de arquivo (${formatoPrimeiroArquivo} vs ${formatoOrigem}).`, 'error');
+                        return;
+                    }
+
+                    listaNotas.forEach(notaNode => {
+                         notasConsolidadas.push(mapearXmlParaPadronizado(notaNode, formatoOrigem));
+                    });
+                }
+            }
+            
+            if (notasConsolidadas.length === 0) {
+                log("Nenhuma nota fiscal válida encontrada para processar.", 'error');
+                processarBtn.disabled = false;
+                processarBtn.textContent = 'Processar Arquivos';
+                return;
+            }
+
+            log(`Total de ${notasConsolidadas.length} notas consolidadas para processamento.`);
+            
+            const colPrestados = [], colTomados = [], colCancelados = [];
+            
+            notasConsolidadas.forEach(nota => {
+                if (nota.prestadorCnpj === cnpjCliente) {
+                    if (nota.situacao === "CANCELADA" || nota.situacao === "SUBSTITUIDA") {
+                        colCancelados.push(nota);
+                    } else {
+                        colPrestados.push(nota);
+                    }
+                } else if (nota.tomadorDoc === cnpjCliente) {
+                    colTomados.push(nota);
+                }
+            });
+
+            log(`Resumo: ${colPrestados.length} prestados, ${colTomados.length} tomados, ${colCancelados.length} cancelados.`);
+            log('Gerando arquivos XML e PDF...');
+            
+            const xmlHeader = '<?xml version="1.0" encoding="UTF-8"?>';
+            
+            if (modoGeracaoEscolhido === 'LOTE') {
+                if (colPrestados.length > 0) {
+                    const lote = colPrestados.map(n => gerarXML_CompNfse(n)).join('\n');
+                    const xmlFinal = `${xmlHeader}<LoteNfse xmlns="http://www.abrasf.org.br/nfse.xsd">${lote}</LoteNfse>`;
+                    triggerDownload(new Blob([xmlFinal], { type: 'application/xml' }), 'ServicosPrestados_Lote.xml');
+                }
+                if (colTomados.length > 0) {
+                    const lote = colTomados.map(n => gerarXML_CompNfse(n)).join('\n');
+                    const xmlFinal = `${xmlHeader}<LoteNfse xmlns="http://www.abrasf.org.br/nfse.xsd">${lote}</LoteNfse>`;
+                    triggerDownload(new Blob([xmlFinal], { type: 'application/xml' }), 'ServicosTomados_Lote.xml');
+                }
+                if (colCancelados.length > 0) {
+                    const lote = colCancelados.map(n => gerarXML_PedidoCancelamento(n)).join('\n');
+                    const xmlFinal = `${xmlHeader}<CancelarNfseEnvio xmlns="http://www.abrasf.org.br/nfse.xsd">${lote}</CancelarNfseEnvio>`;
+                    triggerDownload(new Blob([xmlFinal], { type: 'application/xml' }), 'ServicosPrestadosCancelados_Lote.xml');
+                }
+            } else { // INDIVIDUAL
+                const zipPrestados = new JSZip();
+                const zipTomados = new JSZip();
+                const zipCancelados = new JSZip();
+
+                colPrestados.forEach(n => zipPrestados.file(`Prestada_${n.numero}.xml`, gerarXML_CompNfse(n)));
+                colTomados.forEach(n => zipTomados.file(`Tomada_${n.numero}.xml`, gerarXML_CompNfse(n)));
+                colCancelados.forEach(n => {
+                    const xml = gerarXML_PedidoCancelamento(n);
+                    const xmlFinal = `${xmlHeader}<CancelarNfseEnvio xmlns="http://www.abrasf.org.br/nfse.xsd">${xml}</CancelarNfseEnvio>`;
+                    zipCancelados.file(`Cancelada_${n.numero}.xml`, xmlFinal);
+                });
+
+                if (colPrestados.length > 0) zipPrestados.generateAsync({type:"blob"}).then(blob => triggerDownload(blob, "ServicosPrestados_Individuais.zip"));
+                if (colTomados.length > 0) zipTomados.generateAsync({type:"blob"}).then(blob => triggerDownload(blob, "ServicosTomados_Individuais.zip"));
+                if (colCancelados.length > 0) zipCancelados.generateAsync({type:"blob"}).then(blob => triggerDownload(blob, "ServicosPrestadosCancelados_Individuais.zip"));
+            }
+
+            // Gerar PDFs
+            gerarRelatorioPDF(colPrestados, "Relatório de Serviços Prestados", "Relatorio_Servicos_Prestados.pdf", false);
+            gerarRelatorioPDF(colTomados, "Relatório de Serviços Tomados", "Relatorio_Servicos_Tomados.pdf", false);
+            gerarRelatorioPDF(colCancelados, "Relatório de Notas Canceladas", "Relatorio_Notas_Canceladas.pdf", true);
+
+            log('Processamento concluído com sucesso!', 'success');
+            processarBtn.disabled = false;
+            processarBtn.textContent = 'Processar Arquivos';
+        }
+
+// Troca de abas
+        tabXmlBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            switchTab('xml');
+        });
+        tabTxtBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            switchTab('txt');
+        });
+        
+        // Seleção de modo de geração
+        modoGeracaoButtons.forEach(button => {
+            button.addEventListener('click', () => {
+                modoGeracaoEscolhido = button.dataset.mode;
+                modoGeracaoButtons.forEach(btn => btn.classList.remove('bg-blue-600', 'text-white', 'font-semibold'));
+                button.classList.add('bg-blue-600', 'text-white', 'font-semibold');
+                atualizarEstadoBotao();
+            });
+        });
+        
+        // Input do CNPJ
+        cnpjInput.addEventListener('input', () => {
+            let value = cnpjInput.value.replace(/\D/g, '');
+            if (value.length > 14) value = value.slice(0, 14);
+            cnpjInput.value = value;
+            atualizarEstadoBotao();
+        });
+
+        // Seleção e Drag/Drop de arquivos
+        function handleFiles(files) {
+            const fileType = activeTab === 'xml' ? '.xml' : '.txt';
+            
+            arquivosSelecionados = Array.from(files).filter(file => file.name.endsWith(fileType));
+            
+            if(arquivosSelecionados.length !== files.length) {
+                alert(`Alguns arquivos não eram do tipo ${fileType} e foram ignorados.`);
+            }
+            atualizarListaArquivos();
+        }
+
+        [dragDropAreaXml, dragDropAreaTxt].forEach(area => {
+            area.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                area.classList.add('drag-over');
+            });
+            area.addEventListener('dragleave', () => area.classList.remove('drag-over'));
+            area.addEventListener('drop', (e) => {
+                e.preventDefault();
+                area.classList.remove('drag-over');
+                handleFiles(e.dataTransfer.files);
+            });
+        });
+        
+        xmlFilesInput.addEventListener('change', () => handleFiles(xmlFilesInput.files));
+        txtFilesInput.addEventListener('change', () => handleFiles(txtFilesInput.files));
+        
+        // Remover um arquivo da lista
+        fileListDiv.addEventListener('click', (e) => {
+            const removeBtn = e.target.closest('.remove-file-btn');
+            if (removeBtn) {
+                const index = parseInt(removeBtn.dataset.index, 10);
+                arquivosSelecionados.splice(index, 1);
+                atualizarListaArquivos();
+            }
+        });
+
+        // Botão principal para iniciar o processo
+        processarBtn.addEventListener('click', processarArquivos);
+        
+        // Inicialização
+        switchTab('xml');
+        atualizarListaArquivos();
+        atualizarEstadoBotao();
+    });    
+    </script>
+</body>
+</html>
