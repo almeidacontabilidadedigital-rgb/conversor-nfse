@@ -327,20 +327,10 @@
             return new Promise((resolve, reject) => {
                 const reader = new FileReader();
                 reader.onload = (event) => {
-                    try {
-                        // Tenta decodificar como UTF-8 primeiro
-                        const utf8Decoder = new TextDecoder('utf-8');
-                        const text = utf8Decoder.decode(event.target.result);
-                        resolve(text);
-                    } catch (e) {
-                        // Se falhar, tenta com ISO-8859-1 (Latin-1)
-                        const latin1Decoder = new TextDecoder('iso-8859-1');
-                        const text = latin1Decoder.decode(event.target.result);
-                        resolve(text);
-                    }
+                    resolve(event.target.result);
                 };
                 reader.onerror = (error) => reject(error);
-                reader.readAsArrayBuffer(file);
+                reader.readAsText(file, 'ISO-8859-1');
             });
         }
         
