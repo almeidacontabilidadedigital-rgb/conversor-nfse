@@ -340,6 +340,7 @@
                 .normalize("NFD") // Separa os acentos das letras
                 .replace(/[\u0300-\u036f]/g, "") // Remove os acentos
                 .replace(/'/g, "") // Remove apóstrofos (ex: D'AGUA vira DAGUA)
+                .replace(/\(.*?\)/g, "") // Remove qualquer texto entre parênteses
                 .toUpperCase() // Converte para maiúsculas
                 .trim(); // Remove espaços no início e no fim
         }
