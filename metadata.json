@@ -1,0 +1,5 @@
+{
+  "name": "Conversor ABRASF",
+  "description": "Uma aplicação para converter arquivos de Nota Fiscal de Serviço Eletrônica (NFS-e) nos formatos XML ou TXT para o padrão ABRASF 2.01, com geração de relatórios.",
+  "requestFramePermissions": []
+}
