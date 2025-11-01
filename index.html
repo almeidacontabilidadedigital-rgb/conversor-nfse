@@ -164,6 +164,8 @@
         const logMessagesDiv = document.getElementById('logMessages');
         const downloadLinksDiv = document.getElementById('downloadLinks');
 
+        // --- REMOVIDO o mapaExcecoesIBGE obsoleto ---
+
         // --- Funções de UI e Eventos ---
 
         /** Adiciona uma mensagem ao log na tela. */
@@ -546,10 +548,21 @@
 
             // Agora, todas as buscas usarão 'cidadeLimpa'
             const cidadeNormalizadaChave = normalizeStringParaChave(cidadeLimpa);
+            const chaveBuscaRapida = `${cidadeNormalizadaChave}|${ufUpper}`; // Chave para os mapas
             
+            // --- REMOVIDA a verificação do mapaExcecoesIBGE ---
+
             // 1. Tenta a busca normalizada (mais robusta e rápida)
-            const chaveBuscaRapida = `${cidadeNormalizadaChave}|${ufUpper}`;
             let code = codigosIBGENormalizados[chaveBuscaRapida];
+
+            if (code) {
+                log(`Código IBGE encontrado no mapa de exceções para ${cidadeLimpa}-${ufUpper}.`, 'success');
+                return code;
+            }
+            // +++ FIM DA MODIFICAÇÃO (Verifica Exceções) +++
+
+            // 2. Tenta a busca normalizada (mais robusta e rápida)
+            code = codigosIBGENormalizados[chaveBuscaRapida];
 
             if (code) {
                 return code; // Encontrado na busca rápida
@@ -994,7 +1007,8 @@
                 doc.setFontSize(9);
                 doc.setFont('helvetica', 'normal');
                 
-                const cnpjFormatado = headerInfo.cnpjEmpresa; // Já vem formatado
+                // MODIFICAÇÃO: Corrigido para usar a variável passada em 'headerInfo'
+                const cnpjFormatado = headerInfo.cnpjEmpresa; 
 
                 doc.text(`Empresa: ${headerInfo.nomeEmpresa}`, pageMargin, 22);
                 doc.text(`CNPJ: ${cnpjFormatado}`, doc.internal.pageSize.width / 2, 22, { align: 'center' });
@@ -1086,202 +1100,34 @@
                         doc.addPage();
                     }
                     
-                    drawHeader(null, "Ranking de Clientes"); // Desenha o cabeçalho manualmente
-
-                    const rankingHead = [['#', 'Cliente (Razão Social)', 'Documento (CNPJ/CPF)', 'Valor Total Consumido', 'Serviços Prestados (Códigos)']];
-                    const rankingBody = rankingData.map((cliente, index) => [
-                        index + 1,
-                        cliente.razao,
-                        cliente.doc,
-                        formatCurrency(cliente.totalConsumido),
-                        Array.from(cliente.servicos).join(', ') // Lista os códigos de serviço
-                    ]);
-
-                    doc.autoTable({
-                        head: rankingHead,
-                        body: rankingBody,
-                        startY: 30,
-                        theme: 'striped',
-                        headStyles: { fillColor: [22, 163, 74], textColor: 255, fontStyle: 'bold' }, // Cor verde
-                        styles: { fontSize: 8, cellPadding: 1.5 },
-                        margin: { top: 30, left: pageMargin, right: pageMargin, bottom: 15 },
-                        // didDrawPage não é necessário aqui, pois o cabeçalho foi desenhado manualmente
-                    });
-                }
-                // --- FIM DA MODIFICAÇÃO ---
-            }
-            
-            triggerDownload(doc.output('blob'), nomeArquivo);
-        }
-
-        // --- Lógica Principal de Processamento ---
-
-        async function processarArquivos() {
-            processarBtn.disabled = true;
-            processarBtn.textContent = 'Processando...';
-            resultadosDiv.classList.remove('hidden');
-            logMessagesDiv.innerHTML = '';
-            downloadLinksDiv.innerHTML = '';
-            
-            log('Iniciando processamento...');
-            const cnpjCliente = cnpjInput.value.replace(/\D/g, ''); // Apenas números
-
-            const fileContents = await Promise.all(
-                arquivosSelecionados.map(file => readFileAsText(file))
-            );
-
-            log(`Carregados ${fileContents.length} arquivos na memória.`);
-
-            let notasConsolidadas = [];
-            const isTxt = activeTab === 'txt';
-
-            if (isTxt) {
-                // Processamento de TXT
-                for (let i = 0; i < fileContents.length; i++) {
-                    let content = fileContents[i];
-                    // FIX: Strip BOM (Byte Order Mark) if present, which can break header parsing
-                    if (content.charCodeAt(0) === 0xFEFF) {
-                        content = content.slice(1);
-                    }
-                    const lines = content.split(/\r?\n/).filter(line => line.trim() !== '');
-                    if (lines.length < 2) {
-                        log(`Arquivo "${arquivosSelecionados[i].name}" está vazio ou não tem dados.`, 'error');
-                        continue;
-                    }
-                    const headers = lines[0].split('\t');
-                    for (let j = 1; j < lines.length; j++) {
-                        const values = lines[j].split('\t');
-                        // Ignora a linha de total
-                        if(values[0]?.toLowerCase() === 'total') continue;
-
-                        const notaObj = {};
-                        headers.forEach((header, index) => {
-                            notaObj[header.trim()] = values[index]?.trim() || '';
-                        });
-                        notasConsolidadas.push(mapearTxtParaPadronizado(notaObj));
-                    }
-                }
-
-            } else {
-                // Processamento de XML
-                const parser = new DOMParser();
-                let formatoPrimeiroArquivo = null;
-
-                for (let i = 0; i < fileContents.length; i++) {
-                    const xmlString = fileContents[i];
-                    const xmlDoc = parser.parseFromString(xmlString, "application/xml");
-                    
-                    if (xmlDoc.getElementsByTagName("parsererror").length) {
-                        log(`Erro de sintaxe no arquivo "${arquivosSelecionados[i].name}". Ignorado.`, 'error');
-                        continue;
-                    }
-
-                    let formatoOrigem, listaNotas;
-                    if (xmlDoc.querySelector("NOTA_FISCAL")) {
-                        formatoOrigem = "CG";
-                        listaNotas = xmlDoc.querySelectorAll("NOTA_FISCAL");
-                    } else if (xmlDoc.querySelector("NFe")) {
-                        formatoOrigem = "SIMPLISS"; // Simplificado, ambos usam a mesma base
-                        listaNotas = xmlDoc.querySelectorAll("NFe");
-                    } else {
-                        log(`Formato não reconhecido no arquivo "${arquivosSelecionados[i].name}". Ignorado.`, 'error');
-                        continue;
-                    }
-
-                    if (!formatoPrimeiroArquivo) formatoPrimeiroArquivo = formatoOrigem;
-                    else if (formatoPrimeiroArquivo !== formatoOrigem) {
-                        log(`ERRO: Mistura de formatos de arquivo (${formatoPrimeiroArquivo} vs ${formatoOrigem}).`, 'error');
-                        return;
-                    }
-
-                    listaNotas.forEach(notaNode => {
-                         notasConsolidadas.push(mapearXmlParaPadronizado(notaNode, formatoOrigem));
-                    });
-                }
-            }
-            
-            if (notasConsolidadas.length === 0) {
-                log("Nenhuma nota fiscal válida encontrada para processar.", 'error');
-                processarBtn.disabled = false;
-                processarBtn.textContent = 'Processar Arquivos';
-                return;
-            }
-
-            log(`Total de ${notasConsolidadas.length} notas consolidadas para processamento.`);
-            
-            const colPrestados = [], colTomados = [], colCancelados = [];
-            
-            notasConsolidadas.forEach(nota => {
-                if (nota.prestadorCnpj === cnpjCliente) {
-                    if (nota.situacao === "CANCELADA" || nota.situacao === "SUBSTITUIDA") {
-                        colCancelados.push(nota);
-                    } else {
-                        colPrestados.push(nota);
-                    }
-                } else if (nota.tomadorDoc === cnpjCliente) {
-                    colTomados.push(nota);
-                }
-            });
-
-            log(`Resumo: ${colPrestados.length} prestados, ${colTomados.length} tomados, ${colCancelados.length} cancelados.`);
-            log('Gerando arquivos XML e PDF...');
-            
-            const xmlHeader = '<?xml version="1.0" encoding="UTF-8"?>';
-            
-            if (modoGeracaoEscolhido === 'LOTE') {
-                if (colPrestados.length > 0) {
-                    const lote = colPrestados.map(n => gerarXML_CompNfse(n)).join('\n');
-                    const xmlFinal = `${xmlHeader}<LoteNfse xmlns="http://www.abrasf.org.br/nfse.xsd">${lote}</LoteNfse>`;
-                    triggerDownload(new Blob([xmlFinal], { type: 'application/xml' }), 'ServicosPrestados_Lote.xml');
-                }
-                if (colTomados.length > 0) {
-                    const lote = colTomados.map(n => gerarXML_CompNfse(n)).join('\n');
-                    const xmlFinal = `${xmlHeader}<LoteNfse xmlns="http://www.abrasf.org.br/nfse.xsd">${lote}</LoteNfse>`;
-                    triggerDownload(new Blob([xmlFinal], { type: 'application/xml' }), 'ServicosTomados_Lote.xml');
-                }
-                if (colCancelados.length > 0) {
-                    const lote = colCancelados.map(n => gerarXML_PedidoCancelamento(n)).join('\n');
-                    const xmlFinal = `${xmlHeader}<CancelarNfseEnvio xmlns="http://www.abrasf.org.br/nfse.xsd">${lote}</CancelarNfseEnvio>`;
-                    triggerDownload(new Blob([xmlFinal], { type: 'application/xml' }), 'ServicosPrestadosCancelados_Lote.xml');
-                }
-            } else { // INDIVIDUAL
-                const zipPrestados = new JSZip();
-                const zipTomados = new JSZip();
-                const zipCancelados = new JSZip();
-
-                colPrestados.forEach(n => zipPrestados.file(`Prestada_${n.numero}.xml`, gerarXML_CompNfse(n)));
-                colTomados.forEach(n => zipTomados.file(`Tomada_${n.numero}.xml`, gerarXML_CompNfse(n)));
-                colCancelados.forEach(n => {
-                    const xml = gerarXML_PedidoCancelamento(n);
-                    const xmlFinal = `${xmlHeader}<CancelarNfseEnvio xmlns="http://www.abrasf.org.br/nfse.xsd">${xml}</CancelarNfseEnvio>`;
-                    zipCancelados.file(`Cancelada_${n.numero}.xml`, xmlFinal);
-                });
-
-                if (colPrestados.length > 0) zipPrestados.generateAsync({type:"blob"}).then(blob => triggerDownload(blob, "ServicosPrestados_Individuais.zip"));
-                if (colTomados.length > 0) zipTomados.generateAsync({type:"blob"}).then(blob => triggerDownload(blob, "ServicosTomados_Individuais.zip"));
-                if (colCancelados.length > 0) zipCancelados.generateAsync({type:"blob"}).then(blob => triggerDownload(blob, "ServicosPrestadosCancelados_Individuais.zip"));
-            }
-
-            // Gerar PDFs
             // MODIFICAÇÃO: Coleta dados e passa para a função de gerar PDF
-            const cnpjClienteFormatado = cnpjCliente.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5');
-            
             // Tenta obter o nome da empresa a partir dos dados processados
             let nomeEmpresa = 'Empresa (Não identificado)';
+            // MODIFICAÇÃO: Pega o CNPJ do XML (como solicitado) em vez do input
+            let cnpjEmpresa = cnpjCliente; // Default para o input
+
             if (colPrestados.length > 0) {
                 nomeEmpresa = colPrestados[0].prestadorRazao;
+                cnpjEmpresa = colPrestados[0].prestadorCnpj; // Pega o CNPJ do prestador
             } else if (colTomados.length > 0) {
                 // Se não prestou, pega o nome de tomador (assumindo que é a mesma empresa)
                 const primeiroTomador = colTomados.find(n => n.tomadorDoc === cnpjCliente);
-                if (primeiroTomador) nomeEmpresa = primeiroTomador.tomadorRazao;
+                if (primeiroTomador) {
+                    nomeEmpresa = primeiroTomador.tomadorRazao;
+                    cnpjEmpresa = primeiroTomador.tomadorDoc; // Pega o CNPJ do tomador
+                }
             } else if (colCancelados.length > 0) {
                 nomeEmpresa = colCancelados[0].prestadorRazao;
+                cnpjEmpresa = colCancelados[0].prestadorCnpj; // Pega o CNPJ do prestador
             }
+            
+            // Formata o CNPJ que foi extraído dos dados
+            const cnpjEmpresaFormatado = cnpjEmpresa.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5');
 
             // Gera os dados de cabeçalho para cada relatório
-            const headerInfoPrestados = { nomeEmpresa, cnpjEmpresa: cnpjClienteFormatado, mesReferencia: getMesReferencia(colPrestados.length > 0 ? colPrestados : colCancelados) }; // Usa notas canceladas se não houver prestadas
-            const headerInfoTomados = { nomeEmpresa, cnpjEmpresa: cnpjClienteFormatado, mesReferencia: getMesReferencia(colTomados) };
-            const headerInfoCancelados = { nomeEmpresa, cnpjEmpresa: cnpjClienteFormatado, mesReferencia: getMesReferencia(colCancelados) };
+            const headerInfoPrestados = { nomeEmpresa, cnpjEmpresa: cnpjEmpresaFormatado, mesReferencia: getMesReferencia(colPrestados.length > 0 ? colPrestados : colCancelados) }; // Usa notas canceladas se não houver prestadas
+            const headerInfoTomados = { nomeEmpresa, cnpjEmpresa: cnpjEmpresaFormatado, mesReferencia: getMesReferencia(colTomados) };
+            const headerInfoCancelados = { nomeEmpresa, cnpjEmpresa: cnpjEmpresaFormatado, mesReferencia: getMesReferencia(colCancelados) };
 
             // Gera o ranking APENAS para serviços prestados
             const ranking = gerarRankingClientes(colPrestados);
