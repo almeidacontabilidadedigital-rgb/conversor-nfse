@@ -63,11 +63,26 @@
             <!-- Passo 1: Configuração -->
             <div class="mb-6">
                 <h2 class="text-xl font-semibold text-gray-700 border-b pb-2 mb-4">Passo 1: Configuração</h2>
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
+                <div class="grid grid-cols-1 gap-y-4">
+                     <div>
                         <label for="cnpjCliente" class="block text-sm font-medium text-gray-600 mb-1">CNPJ da sua empresa</label>
                         <input type="text" id="cnpjCliente" placeholder="Digite os 14 dígitos do CNPJ" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition">
                     </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                            <label for="ufEmpresa" class="block text-sm font-medium text-gray-600 mb-1">UF da Empresa</label>
+                            <select id="ufEmpresa" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition bg-white">
+                                <option value="">Selecione a UF</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label for="municipioEmpresa" class="block text-sm font-medium text-gray-600 mb-1">Município da Empresa</label>
+                            <input type="text" id="municipioEmpresa" list="municipiosList" placeholder="Selecione ou digite" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition" disabled>
+                            <datalist id="municipiosList"></datalist>
+                        </div>
+                    </div>
+
                     <div>
                         <label class="block text-sm font-medium text-gray-600 mb-1">Modo de Geração</label>
                         <div id="modoGeracao" class="flex space-x-2">
@@ -149,6 +164,9 @@
 
         // --- Referências aos Elementos do DOM ---
         const cnpjInput = document.getElementById('cnpjCliente');
+        const ufEmpresaSelect = document.getElementById('ufEmpresa');
+        const municipioEmpresaInput = document.getElementById('municipioEmpresa');
+        const municipiosList = document.getElementById('municipiosList');
         const modoGeracaoButtons = document.querySelectorAll('#modoGeracao button');
         const processarBtn = document.getElementById('processarBtn');
         const tabXmlBtn = document.getElementById('tab-xml');
@@ -267,6 +285,23 @@
             return '9999999';
         }
 
+        /** Atualiza a lista de municípios com base na UF selecionada. */
+        function atualizarMunicipios(uf) {
+            municipioEmpresaInput.value = '';
+            municipiosList.innerHTML = '';
+            if (uf && codigosPorUF[uf]) {
+                municipioEmpresaInput.disabled = false;
+                codigosPorUF[uf].sort((a, b) => a.original.localeCompare(b.original)).forEach(cidadeInfo => {
+                    const option = document.createElement('option');
+                    option.value = cidadeInfo.original;
+                    municipiosList.appendChild(option);
+                });
+            } else {
+                municipioEmpresaInput.disabled = true;
+            }
+        }
+
+
         // --- Carregamento e Pré-processamento de Dados ---
         async function carregarDadosMunicipios() {
             try {
@@ -292,6 +327,16 @@
                         code: codigosIBGE[key]
                     });
                 }
+                
+                // Popula o dropdown de UFs
+                const ufs = Object.keys(codigosPorUF).sort();
+                ufs.forEach(uf => {
+                    const option = document.createElement('option');
+                    option.value = uf;
+                    option.textContent = uf;
+                    ufEmpresaSelect.appendChild(option);
+                });
+                
                 console.log('Dados dos municípios carregados e pré-processados com sucesso.');
             } catch (error) {
                 console.error('Falha ao carregar ou processar o arquivo municipios.json:', error);
@@ -400,7 +445,11 @@
         /** Atualiza o estado do botão 'Processar'. */
         function atualizarEstadoBotao() {
             const cnpjValido = cnpjInput.value.replace(/\D/g, '').length === 14;
-            processarBtn.disabled = !(cnpjValido && modoGeracaoEscolhido && arquivosSelecionados.length > 0);
+            const ufSelecionado = ufEmpresaSelect.value;
+            const municipioDigitado = municipioEmpresaInput.value;
+            const municipioValido = ufSelecionado && codigosPorUF[ufSelecionado]?.some(c => c.original.toLowerCase() === municipioDigitado.toLowerCase());
+            
+            processarBtn.disabled = !(cnpjValido && modoGeracaoEscolhido && arquivosSelecionados.length > 0 && municipioValido);
         }
 
         /** Atualiza a lista de arquivos exibida na tela. */
@@ -625,7 +674,7 @@
         
         // --- Funções de Mapeamento de Dados ---
 
-        function mapearXmlParaPadronizado(noNota, formato) {
+        function mapearXmlParaPadronizado(noNota, formato, codMunEmpresa) {
             const prestadorCnpj = getNodeText(noNota, formato === 'CG' ? 'PRESTADOR_CPF_CNPJ' : 'Prestador > CnpjCpf').replace(/\D/g, '');
             const tomadorCnpj = getNodeText(noNota, formato === 'CG' ? 'TOMADOR_CPF_CNPJ' : 'Tomador > CnpjCpf').replace(/\D/g, '');
             const situacao = (formato === "CG" 
@@ -641,6 +690,14 @@
             
             const issRetidoCG = safeParseFloat(getNodeText(noNota, "VALOR_ISS_RET", "0"));
             const codServicoOriginal = getNodeText(noNota, formato === 'CG' ? "COS_SERVICO" : "ItemListaServico");
+            const codMunPrestacao = findIBGECode(prestacaoCidade, prestacaoUf);
+
+            let exigibilidade;
+            if (!prestacaoCidade) {
+                exigibilidade = "1"; // Se não especificado, assume-se que é no município do prestador
+            } else {
+                exigibilidade = (codMunEmpresa === codMunPrestacao) ? "1" : "2";
+            }
 
             return {
                 numero: getNodeText(noNota, formato === 'CG' ? "NUM_NOTA" : "Numero"),
@@ -670,10 +727,10 @@
                 valorCSLL: safeParseFloat(getNodeText(noNota, formato === 'CG' ? "VALOR_CSLL" : "Servico > Valores > ValorCsll")),
                 issRetido: (formato === 'CG' ? (issRetidoCG > 0 ? "1" : "2") : (getNodeText(noNota, "Servico > Valores > IssRetido", "2"))),
                 valorIssRetido: issRetidoCG > 0 ? issRetidoCG : safeParseFloat(getNodeText(noNota, "Servico > Valores > ValorIssRetido")),
-                exigibilidadeISS: (formato === 'CG' ? (normalizeForLookup(prestacaoCidade) === normalizeForLookup(prestadorCidade) || prestacaoCidade === "" ? "1" : "2") : "1"),
+                exigibilidadeISS: exigibilidade,
                 itemLista: mapaServicos[codServicoOriginal] || codServicoOriginal,
                 codCnae: getNodeText(noNota, formato === 'CG' ? "CODIGO_ATIVIDADE" : "Servico > CodigoCnae"),
-                codMunPrestacao: findIBGECode(prestacaoCidade, prestacaoUf),
+                codMunPrestacao: codMunPrestacao,
                 prestacaoLocal: `${prestacaoCidade} - ${prestacaoUf}`,
                 tomadorDoc: tomadorCnpj,
                 tomadorRazao: normalizeName(getNodeText(noNota, formato === 'CG' ? "TOMADOR_RAZAO_SOCIAL" : "Tomador > RazaoSocial")),
@@ -692,7 +749,7 @@
         }
 
 
-        function mapearTxtParaPadronizado(notaTxt) {
+        function mapearTxtParaPadronizado(notaTxt, codMunEmpresa) {
              const prestadorCidade = notaTxt["Cidade do Prestador"];
              const prestadorUf = notaTxt["UF do Prestador"];
              const tomadorCidade = notaTxt["Cidade do Tomador"];
@@ -724,6 +781,8 @@
                 codMunPrestacao = prestadorCodMun;
             }
 
+            const exigibilidade = (codMunEmpresa === codMunPrestacao) ? "1" : "2";
+
             return {
                 numero: notaTxt["Nº NFS-e"],
                 codigoVerificacao: notaTxt["Código de Verificação da NFS-e"],
@@ -752,7 +811,7 @@
                 valorCSLL: valorCSLL,
                 issRetido: isIssRetido ? "1" : "2",
                 valorIssRetido: valorIssRetido,
-                exigibilidadeISS: "1", 
+                exigibilidadeISS: exigibilidade, 
                 itemLista: mapaServicos[codServicoOriginal] || codServicoOriginal,
                 codCnae: '', 
                 codMunPrestacao: codMunPrestacao,
@@ -1103,6 +1162,16 @@
             
             log('Iniciando processamento...');
             const cnpjCliente = cnpjInput.value.replace(/\D/g, '');
+            const ufEmpresa = ufEmpresaSelect.value;
+            const municipioEmpresa = municipioEmpresaInput.value;
+            const codMunEmpresa = findIBGECode(municipioEmpresa, ufEmpresa);
+
+            if (!codMunEmpresa || codMunEmpresa === '9999999') {
+                log(`Município da empresa ("${municipioEmpresa} - ${ufEmpresa}") inválido ou não encontrado. Verifique a seleção.`, 'error');
+                processarBtn.disabled = false;
+                processarBtn.textContent = 'Processar Arquivos';
+                return;
+            }
 
             const fileContents = await Promise.all(
                 arquivosSelecionados.map(file => readFileAsText(file))
@@ -1133,7 +1202,7 @@
                         headers.forEach((header, index) => {
                             notaObj[header.trim()] = values[index]?.trim() || '';
                         });
-                        notasConsolidadas.push(mapearTxtParaPadronizado(notaObj));
+                        notasConsolidadas.push(mapearTxtParaPadronizado(notaObj, codMunEmpresa));
                     }
                 }
 
@@ -1167,7 +1236,7 @@
                         }
 
                         listaNotas.forEach(notaNode => {
-                            notasConsolidadas.push(mapearXmlParaPadronizado(notaNode, formatoOrigem));
+                            notasConsolidadas.push(mapearXmlParaPadronizado(notaNode, formatoOrigem, codMunEmpresa));
                         });
                     } catch (e) {
                          log(`Erro inesperado ao processar "${arquivosSelecionados[i].name}": ${e.message}`, 'error');
@@ -1328,6 +1397,13 @@
             cnpjInput.value = value;
             atualizarEstadoBotao();
         });
+
+        // Seleção de UF e Município
+        ufEmpresaSelect.addEventListener('change', () => {
+            atualizarMunicipios(ufEmpresaSelect.value);
+            atualizarEstadoBotao();
+        });
+        municipioEmpresaInput.addEventListener('input', atualizarEstadoBotao);
 
         // Seleção e Drag/Drop de arquivos
         function handleFiles(files) {
