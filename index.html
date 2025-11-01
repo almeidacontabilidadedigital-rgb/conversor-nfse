@@ -869,13 +869,14 @@
                             <ValorInss>${nota.valorINSS.toFixed(2)}</ValorInss>
                             <ValorIr>${nota.valorIR.toFixed(2)}</ValorIr>
                             <ValorCsll>${nota.valorCSLL.toFixed(2)}</ValorCsll>
-                            <IssRetido>${nota.issRetido}</IssRetido>
                             <ValorIss>${nota.valorIss.toFixed(2)}</ValorIss>
                             <ValorIssRetido>${nota.valorIssRetido.toFixed(2)}</ValorIssRetido>
                             <BaseCalculo>${nota.valorServico.toFixed(2)}</BaseCalculo>
                             <Aliquota>${(nota.aliquota / 100).toFixed(4)}</Aliquota>
                             <ValorLiquidoNfse>${valorLiquido.toFixed(2)}</ValorLiquidoNfse>
                         </Valores>
+                        <IssRetido>${nota.issRetido}</IssRetido>
+                        <ExigibilidadeISS>${nota.exigibilidadeISS}</ExigibilidadeISS>
                         <ItemListaServico>${nota.itemLista}</ItemListaServico>
                         ${nota.codCnae ? `<CodigoCnae>${nota.codCnae}</CodigoCnae>` : ''}
                         <Discriminacao>${escapeXML(descricaoPrincipal)}</Discriminacao>
