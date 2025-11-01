@@ -255,8 +255,6 @@
                 }
 
                 // Considera um match se a distância for pequena (ex: <= 2).
-                // A distância de Levenshtein é uma boa métrica para erros de digitação.
-                // Uma tolerância de 2 geralmente cobre a maioria dos erros comuns.
                 if (bestMatch && minDistance <= 2) {
                      // Cache para futuras buscas
                     normalizedCodigosIBGE[normalizedKey] = bestMatch.code;
@@ -279,16 +277,13 @@
                 }
                 codigosIBGE = await response.json();
                 
-                // Pré-processa os dados para buscas rápidas e por aproximação
                 for (const key in codigosIBGE) {
                     const [cidade, uf] = key.split('|');
                     if (!cidade || !uf) continue;
 
-                    // Mapa para busca rápida normalizada
                     const normalizedKey = normalizeForLookup(key);
                     normalizedCodigosIBGE[normalizedKey] = codigosIBGE[key];
                     
-                    // Mapa agrupado por UF para busca por aproximação
                     if (!codigosPorUF[uf]) {
                         codigosPorUF[uf] = [];
                     }
@@ -379,7 +374,8 @@
             "08400": "12.12", "08419": "12.14", "08478": "19.01", "08486": "19.01", "08479": "19.01", "08480": "19.01", "08482": "19.01",
             "08483": "19.01", "8487": "19.01", "08488": "19.01", "08494": "6.01", "08516": "6.02", "08532": "6.03", "08567": "6.05",
             "08575": "6.01", "08658": "6.06", "08659": "6.06", "08648": "5.08", "08656": "5.08", "08664": "34.01", "08672": "34.01",
-            "08770": "37.01", "08842": "37.01", "08850": "37.01", "08885": "39.01", "08893": "40.01", "08899": "34.01"
+            "08770": "37.01", "08842": "37.01", "08850": "37.01", "08885": "39.01", "08893": "40.01", "08899": "34.01",
+            "1701": "1.04" // Mapeamento adicionado para o Cód Serviço 1701
         };
         
         /** Troca a aba ativa (XML/TXT). */
@@ -433,6 +429,50 @@
         }
 
         // --- Funções Utilitárias ---
+        
+        function normalizeName(name) {
+            if (!name) return '';
+            // Remove acentos, mantendo a caixa original por enquanto
+            let normalized = name.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+            // Remove caracteres especiais não desejados, permitindo um conjunto útil para nomes de empresas
+            normalized = normalized.replace(/[^a-zA-Z0-9\s.,/&-]/g, '');
+            // Converte para maiúsculas no final
+            return normalized.toUpperCase();
+        }
+
+        function simplifyServiceDescription(desc) {
+            if (!desc) return "Não especificado";
+
+            // Limpeza robusta para remover caracteres inválidos antes da normalização
+            let simplified = desc.replace(/[^\p{L}\p{N}\p{P}\p{Z}^$]/gu, ' ') // Remove caracteres estranhos
+                                 .toUpperCase()
+                                 .normalize('NFD')
+                                 .replace(/[\u0300-\u036f]/g, '')
+                                 .replace(/<BR\s*\/?>/gi, ' ')
+                                 .replace(/PRESTA.*? DE SERVICO DE /, '');
+
+            // Regras de simplificação baseadas em palavras-chave
+            if (simplified.includes('ASSESSORIA DE ABATE')) {
+                return 'ASSESSORIA DE ABATE';
+            }
+            if (simplified.includes('SERVICO TECNICO') && simplified.includes('ACOMPANHAMENTO')) {
+                return 'ACOMPANHAMENTO TECNICO';
+            }
+            if (simplified.includes('SERVICO TECNICO ESPECIALIZADO')) {
+                return 'SERVICO TECNICO ESPECIALIZADO';
+            }
+
+            // Fallback: remove detalhes numéricos, de período e localidade para encurtar
+            return simplified.replace(/REALIZADA\(S\)? EM \d+ ANIMAIS.*/, '')
+                             .replace(/NO MES DE.*/, '')
+                             .replace(/PERIODO DE.*/, '')
+                             .replace(/FAZENDA[:\s].*/, '')
+                             .replace(/SITIO[:\s].*/, '')
+                             .replace(/IE[:\s].*/, '')
+                             .replace(/\s+/g, ' ') // normaliza espaços
+                             .trim()
+                             .substring(0, 60); // Limita o tamanho final
+        }
 
         function readFileAsText(file) {
             return new Promise((resolve, reject) => {
@@ -507,6 +547,43 @@
                 }
             });
         }
+
+        function extrairMesReferencia(notas) {
+            const meses = ["janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto", "setembro", "outubro", "novembro", "dezembro"];
+
+            for (const nota of notas) {
+                const dateString = nota.dataEmissao || nota.competencia; // Prioriza dataEmissao
+                if (!dateString) continue;
+
+                try {
+                    let date;
+                    // Handle YYYY-MM-DDTHH:mm:ss or YYYY-MM-DD
+                    if (dateString.includes('-')) {
+                        // Append Z to treat as UTC, preventing timezone shifts
+                        date = new Date(dateString.replace(" ", "T").substring(0, 19) + 'Z');
+                    }
+                    // Handle DD/MM/YYYY HH:mm:ss or DD/MM/YYYY
+                    else if (dateString.includes('/')) {
+                        const parts = dateString.split(' ')[0].split('/');
+                        if (parts.length === 3) {
+                            const [day, month, year] = parts;
+                            // Date.UTC(year, monthIndex, day)
+                            date = new Date(Date.UTC(year, month - 1, day));
+                        }
+                    }
+
+                    if (date && !isNaN(date.getTime())) {
+                        const monthIndex = date.getUTCMonth();
+                        const year = date.getUTCFullYear();
+                        return `${meses[monthIndex]}/${year}`;
+                    }
+                } catch (e) {
+                    console.warn(`Could not parse date: ${dateString}`, e);
+                    continue;
+                }
+            }
+            return "N/A";
+        }
         
         // --- Funções de Mapeamento de Dados ---
 
@@ -525,56 +602,57 @@
             const prestacaoUf = getNodeText(noNota, formato === 'CG' ? 'UF_PRESTACAO' : 'UfPrestacao');
             
             const issRetidoCG = safeParseFloat(getNodeText(noNota, "VALOR_ISS_RET", "0"));
-            const codServicoOriginal = getNodeText(noNota, formato === 'CG' ? "COS_SERVICO" : "CodigoItemLei116");
+            const codServicoOriginal = getNodeText(noNota, formato === 'CG' ? "COS_SERVICO" : "ItemListaServico");
 
             return {
-                numero: getNodeText(noNota, formato === 'CG' ? "NUM_NOTA" : "NumeroNFe"),
-                codigoVerificacao: getNodeText(noNota, formato === 'CG' ? "CODIGO_VERIFICACAO" : "CodigoVerificador"),
-                dataEmissao: getNodeText(noNota, formato === 'CG' ? "DATA_HORA_EMISSAO" : "DataEmissaoNFe"),
+                numero: getNodeText(noNota, formato === 'CG' ? "NUM_NOTA" : "Numero"),
+                codigoVerificacao: getNodeText(noNota, formato === 'CG' ? "CODIGO_VERIFICACAO" : "CodigoVerificacao"),
+                dataEmissao: getNodeText(noNota, formato === 'CG' ? "DATA_HORA_EMISSAO" : "DataEmissao"),
                 dataCancelamento: getNodeText(noNota, 'DATA_HORA_CANCELAMENTO', ''),
                 discriminacao: getNodeText(noNota, formato === 'CG' ? "DESCRICAO_NOTA" : "Discriminacao"),
-                valorServico: safeParseFloat(getNodeText(noNota, formato === 'CG' ? "VALOR_SERVICO" : "ValorNFe")),
-                aliquota: safeParseFloat(getNodeText(noNota, formato === 'CG' ? "ALIQUOTA" : "AliquotaIss")),
-                valorIss: safeParseFloat(getNodeText(noNota, formato === 'CG' ? "VALOR_ISS" : "ValorISS")),
+                valorServico: safeParseFloat(getNodeText(noNota, formato === 'CG' ? "VALOR_SERVICO" : "Servico > Valores > ValorServicos")),
+                aliquota: safeParseFloat(getNodeText(noNota, formato === 'CG' ? "ALIQUOTA" : "Servico > Valores > Aliquota")),
+                valorIss: safeParseFloat(getNodeText(noNota, formato === 'CG' ? "VALOR_ISS" : "Servico > Valores > ValorIss")),
                 prestadorCnpj: prestadorCnpj,
-                prestadorIM: getNodeText(noNota, formato === 'CG' ? "PRESTADOR_INSCRICAO_MUNICIPAL" : "Prestador > InscricaoMunicipal"),
-                prestadorRazao: getNodeText(noNota, formato === 'CG' ? "PRESTADOR_RAZAO_SOCIAL" : "Prestador > RazaoSocialNome"),
-                prestadorEnd: getNodeText(noNota, formato === 'CG' ? "PRESTADOR_LOGRADOURO" : "Prestador > Logradouro"),
-                prestadorNum: getNodeText(noNota, formato === 'CG' ? "PRESTADOR_PREST_NUMERO" : "Prestador > Numero"),
-                prestadorComp: getNodeText(noNota, formato === 'CG' ? "PRESTADOR_COMPLEMENTO" : "Prestador > Complemento"),
-                prestadorBairro: getNodeText(noNota, formato === 'CG' ? "PRESTADOR_BAIRRO" : "Prestador > Bairro"),
+                prestadorIM: getNodeText(noNota, formato === 'CG' ? "PRESTADOR_INSCRICAO_MUNICIPAL" : "PrestadorServico > IdentificacaoPrestador > InscricaoMunicipal"),
+                prestadorRazao: normalizeName(getNodeText(noNota, formato === 'CG' ? "PRESTADOR_RAZAO_SOCIAL" : "PrestadorServico > RazaoSocial")),
+                prestadorEnd: getNodeText(noNota, formato === 'CG' ? "PRESTADOR_LOGRADOURO" : "PrestadorServico > Endereco > Endereco"),
+                prestadorNum: getNodeText(noNota, formato === 'CG' ? "PRESTADOR_PREST_NUMERO" : "PrestadorServico > Endereco > Numero"),
+                prestadorComp: getNodeText(noNota, formato === 'CG' ? "PRESTADOR_COMPLEMENTO" : "PrestadorServico > Endereco > Complemento"),
+                prestadorBairro: getNodeText(noNota, formato === 'CG' ? "PRESTADOR_BAIRRO" : "PrestadorServico > Endereco > Bairro"),
                 prestadorCodMun: findIBGECode(prestadorCidade, prestadorUf),
                 prestadorUF: prestadorUf,
-                prestadorCEP: getNodeText(noNota, formato === 'CG' ? "PRESTADOR_CEP" : "Prestador > Cep").replace(/\D/g, ''),
-                competencia: getNodeText(noNota, formato === 'CG' ? "MES_COMPETENCIA" : "DataCompetenciaNFe"),
-                valorDeducao: safeParseFloat(getNodeText(noNota, formato === 'CG' ? "VALOR_DEDUCAO" : "0")),
-                valorPIS: safeParseFloat(getNodeText(noNota, formato === 'CG' ? "VALOR_PIS" : "ValorPIS")),
-                valorCOFINS: safeParseFloat(getNodeText(noNota, formato === 'CG' ? "VALOR_COFINS" : "ValorCOFINS")),
-                valorINSS: safeParseFloat(getNodeText(noNota, formato === 'CG' ? "VALOR_INSS" : "ValorINSS")),
-                valorIR: safeParseFloat(getNodeText(noNota, formato === 'CG' ? "VALOR_IR" : "ValorIRRF")),
-                valorCSLL: safeParseFloat(getNodeText(noNota, formato === 'CG' ? "VALOR_CSLL" : "ValorCSLL")),
-                issRetido: (formato === 'CG' ? (issRetidoCG > 0 ? "1" : "2") : (getNodeText(noNota, "ISSRetido", "0") === "1" ? "1" : "2")),
-                valorIssRetido: issRetidoCG > 0 ? issRetidoCG : (getNodeText(noNota, "ISSRetido", "0") === "1" ? safeParseFloat(getNodeText(noNota, "ValorISS")) : 0),
+                prestadorCEP: getNodeText(noNota, formato === 'CG' ? "PRESTADOR_CEP" : "PrestadorServico > Endereco > Cep").replace(/\D/g, ''),
+                competencia: getNodeText(noNota, formato === 'CG' ? "MES_COMPETENCIA" : "Competencia"),
+                valorDeducao: safeParseFloat(getNodeText(noNota, formato === 'CG' ? "VALOR_DEDUCAO" : "Servico > Valores > ValorDeducoes", "0")),
+                valorPIS: safeParseFloat(getNodeText(noNota, formato === 'CG' ? "VALOR_PIS" : "Servico > Valores > ValorPis")),
+                valorCOFINS: safeParseFloat(getNodeText(noNota, formato === 'CG' ? "VALOR_COFINS" : "Servico > Valores > ValorCofins")),
+                valorINSS: safeParseFloat(getNodeText(noNota, formato === 'CG' ? "VALOR_INSS" : "Servico > Valores > ValorInss")),
+                valorIR: safeParseFloat(getNodeText(noNota, formato === 'CG' ? "VALOR_IR" : "Servico > Valores > ValorIr")),
+                valorCSLL: safeParseFloat(getNodeText(noNota, formato === 'CG' ? "VALOR_CSLL" : "Servico > Valores > ValorCsll")),
+                issRetido: (formato === 'CG' ? (issRetidoCG > 0 ? "1" : "2") : (getNodeText(noNota, "Servico > Valores > IssRetido", "2"))),
+                valorIssRetido: issRetidoCG > 0 ? issRetidoCG : safeParseFloat(getNodeText(noNota, "Servico > Valores > ValorIssRetido")),
                 exigibilidadeISS: (formato === 'CG' ? (normalizeForLookup(prestacaoCidade) === normalizeForLookup(prestadorCidade) || prestacaoCidade === "" ? "1" : "2") : "1"),
                 itemLista: mapaServicos[codServicoOriginal] || codServicoOriginal,
-                codCnae: getNodeText(noNota, formato === 'CG' ? "CODIGO_ATIVIDADE" : "Prestador > CodigoCnaePrincipal"),
+                codCnae: getNodeText(noNota, formato === 'CG' ? "CODIGO_ATIVIDADE" : "Servico > CodigoCnae"),
                 codMunPrestacao: findIBGECode(prestacaoCidade, prestacaoUf),
                 prestacaoLocal: `${prestacaoCidade} - ${prestacaoUf}`,
                 tomadorDoc: tomadorCnpj,
-                tomadorRazao: getNodeText(noNota, formato === 'CG' ? "TOMADOR_RAZAO_SOCIAL" : "Tomador > RazaoSocialNome"),
-                tomadorEnd: getNodeText(noNota, formato === 'CG' ? "TOMADOR_LOGRADOURO" : "Tomador > Logradouro"),
-                tomadorNum: getNodeText(noNota, formato === 'CG' ? "TOMADOR_NUMERO" : "Tomador > Numero"),
-                tomadorComp: getNodeText(noNota, formato === 'CG' ? "TOMADOR_COMPLEMENTO" : "Tomador > Complemento"),
-                tomadorBairro: getNodeText(noNota, formato === 'CG' ? "TOMADOR_BAIRRO" : "Tomador > Bairro"),
+                tomadorRazao: normalizeName(getNodeText(noNota, formato === 'CG' ? "TOMADOR_RAZAO_SOCIAL" : "Tomador > RazaoSocial")),
+                tomadorEnd: getNodeText(noNota, formato === 'CG' ? "TOMADOR_LOGRADOURO" : "Tomador > Endereco > Endereco"),
+                tomadorNum: getNodeText(noNota, formato === 'CG' ? "TOMADOR_NUMERO" : "Tomador > Endereco > Numero"),
+                tomadorComp: getNodeText(noNota, formato === 'CG' ? "TOMADOR_COMPLEMENTO" : "Tomador > Endereco > Complemento"),
+                tomadorBairro: getNodeText(noNota, formato === 'CG' ? "TOMADOR_BAIRRO" : "Tomador > Endereco > Bairro"),
                 tomadorCodMun: findIBGECode(tomadorCidade, tomadorUf),
                 tomadorUF: tomadorUf,
-                tomadorCEP: getNodeText(noNota, formato === 'CG' ? "TOMADOR_CEP" : "Tomador > Cep").replace(/\D/g, ''),
-                tomadorEmail: getNodeText(noNota, formato === 'CG' ? "TOMADOR_EMAIL" : "Tomador > Email"),
-                optanteSimples: (formato === 'CG' ? (getNodeText(noNota, "TRIBUTACAO_PRESTACAO") === "H" ? "1" : "2") : (getNodeText(noNota, "PrestadorOptanteSimplesNacional", "0") === "1" ? "1" : "2")),
+                tomadorCEP: getNodeText(noNota, formato === 'CG' ? "TOMADOR_CEP" : "Tomador > Endereco > Cep").replace(/\D/g, ''),
+                tomadorEmail: getNodeText(noNota, formato === 'CG' ? "TOMADOR_EMAIL" : "Tomador > Contato > Email"),
+                optanteSimples: (formato === 'CG' ? (getNodeText(noNota, "TRIBUTACAO_PRESTACAO") === "H" ? "1" : "2") : (getNodeText(noNota, "OptanteSimplesNacional", "2"))),
                 situacao: situacao,
-                valorLiquido: safeParseFloat(getNodeText(noNota, formato === 'CG' ? "0" : "ValorLiquidoNFe")),
+                valorLiquido: safeParseFloat(getNodeText(noNota, formato === 'CG' ? "0" : "ValoresNfse > ValorLiquidoNfse")),
             };
         }
+
 
         function mapearTxtParaPadronizado(notaTxt) {
              const prestadorCidade = notaTxt["Cidade do Prestador"];
@@ -619,7 +697,7 @@
                 valorIss: valorIss,
                 prestadorCnpj: notaTxt["CPF/CNPJ do Prestador"]?.replace(/\D/g, ''),
                 prestadorIM: notaTxt["Inscrição Municipal do Prestador"],
-                prestadorRazao: notaTxt["Razão Social do Prestador"],
+                prestadorRazao: normalizeName(notaTxt["Razão Social do Prestador"]),
                 prestadorEnd: notaTxt["Endereço do Prestador"],
                 prestadorNum: notaTxt["Número do Endereço do Prestador"],
                 prestadorComp: notaTxt["Complemento do Endereço do Prestador"],
@@ -642,7 +720,7 @@
                 codMunPrestacao: codMunPrestacao,
                 prestacaoLocal: '', // O TXT não informa o nome da cidade de prestação
                 tomadorDoc: notaTxt["CPF/CNPJ do Tomador"]?.replace(/\D/g, ''),
-                tomadorRazao: notaTxt["Razão Social do Tomador"],
+                tomadorRazao: normalizeName(notaTxt["Razão Social do Tomador"]),
                 tomadorEnd: notaTxt["Endereço do Tomador"],
                 tomadorNum: notaTxt["Número do Endereço do Tomador"],
                 tomadorComp: notaTxt["Complemento do Endereço do Tomador"],
@@ -704,7 +782,7 @@
             }
             
             let valorLiquido = nota.valorLiquido;
-             if(activeTab === 'xml' && valorLiquido === 0) { // Recalcula para XML se não veio pronto (caso do XML CG)
+             if(valorLiquido === 0) { // Recalcula se não veio pronto ou está zerado
                 valorLiquido = nota.valorServico - nota.valorIR - nota.valorPIS - nota.valorCOFINS - nota.valorCSLL - nota.valorINSS - nota.valorIssRetido - nota.valorDeducao;
             }
 
@@ -717,7 +795,7 @@
             ${outrasInfo ? `<OutrasInformacoes>${escapeXML(outrasInfo)}</OutrasInformacoes>` : ''}
             <ValoresNfse>
                 <BaseCalculo>${nota.valorServico.toFixed(2)}</BaseCalculo>
-                <Aliquota>${(nota.aliquota).toFixed(2)}</Aliquota>
+                <Aliquota>${(nota.aliquota / 100).toFixed(4)}</Aliquota>
                 <ValorIss>${nota.valorIss.toFixed(2)}</ValorIss>
                 <ValorLiquidoNfse>${valorLiquido.toFixed(2)}</ValorLiquidoNfse>
             </ValoresNfse>
@@ -753,11 +831,13 @@
                             <ValorInss>${nota.valorINSS.toFixed(2)}</ValorInss>
                             <ValorIr>${nota.valorIR.toFixed(2)}</ValorIr>
                             <ValorCsll>${nota.valorCSLL.toFixed(2)}</ValorCsll>
+                            <IssRetido>${nota.issRetido}</IssRetido>
                             <ValorIss>${nota.valorIss.toFixed(2)}</ValorIss>
-                            <Aliquota>${(nota.aliquota).toFixed(2)}</Aliquota>
+                            <ValorIssRetido>${nota.valorIssRetido.toFixed(2)}</ValorIssRetido>
+                            <BaseCalculo>${nota.valorServico.toFixed(2)}</BaseCalculo>
+                            <Aliquota>${(nota.aliquota / 100).toFixed(4)}</Aliquota>
+                            <ValorLiquidoNfse>${valorLiquido.toFixed(2)}</ValorLiquidoNfse>
                         </Valores>
-                        <IssRetido>${nota.issRetido}</IssRetido>
-                        <ExigibilidadeISS>${nota.exigibilidadeISS}</ExigibilidadeISS>
                         <ItemListaServico>${nota.itemLista}</ItemListaServico>
                         ${nota.codCnae ? `<CodigoCnae>${nota.codCnae}</CodigoCnae>` : ''}
                         <Discriminacao>${escapeXML(descricaoPrincipal)}</Discriminacao>
@@ -791,6 +871,7 @@
             return xml;
         }
 
+
         function gerarXML_PedidoCancelamento(nota) {
             return `<Pedido>
     <InfPedidoCancelamento>
@@ -807,34 +888,124 @@
 </Pedido>`;
         }
         
-        function gerarRelatorioPDF(colNotas, tituloRelatorio, nomeArquivo, isCancelada) {
+        function gerarRelatorioPDF(colNotas, tituloRelatorio, nomeArquivo, isCancelada, headerInfo = {}) {
             if (colNotas.length === 0) return;
 
-            const doc = new jsPDF({ orientation: 'landscape' });
+            const doc = new jsPDF({ orientation: 'landscape', format: 'a4' });
             
+            const pageHeader = (data, title) => {
+                const margin = data.settings.margin.left;
+                doc.setFontSize(16);
+                doc.setFont('helvetica', 'bold');
+                doc.text(headerInfo.razaoSocial || 'Relatório de Notas Fiscais', margin, 15);
+                
+                doc.setFontSize(10);
+                doc.setFont('helvetica', 'normal');
+                doc.text(`CNPJ: ${headerInfo.cnpj || 'N/A'}`, margin, 21);
+                doc.text(`Mês Referência: ${headerInfo.mesRef || 'N/A'}`, doc.internal.pageSize.getWidth() - margin, 21, { align: 'right' });
+
+                if (title) {
+                    doc.setFontSize(12);
+                    doc.setFont('helvetica', 'bold');
+                    doc.text(title, doc.internal.pageSize.getWidth() / 2, 28, { align: 'center' });
+                }
+            };
+
             if (isCancelada) {
-                const head = [['Nº NFS-e', 'Data Emissão', 'Local da Prestação', 'Data Cancelamento', 'Status']];
-                const body = colNotas.map(nota => [
-                    nota.numero,
-                    (nota.dataEmissao || '').split(' ')[0],
-                    nota.prestacaoLocal,
-                    (nota.dataCancelamento || '').split(' ')[0],
-                    'Cancelada'
-                ]);
-                 doc.autoTable({
-                    head: head,
-                    body: body,
-                    startY: 25,
+                doc.autoTable({
+                    head: [['Nº NFS-e', 'Data Emissão', 'Local da Prestação', 'Data Cancelamento', 'Status']],
+                    body: colNotas.map(nota => [
+                        nota.numero,
+                        (nota.dataEmissao || '').split(' ')[0],
+                        nota.prestacaoLocal,
+                        (nota.dataCancelamento || '').split(' ')[0],
+                        'Cancelada'
+                    ]),
+                    startY: 35,
+                    margin: { top: 35 },
                     theme: 'striped',
                     headStyles: { fillColor: [41, 128, 185], textColor: 255, fontStyle: 'bold' },
                     styles: { fontSize: 8 },
-                    didDrawPage: data => doc.text(tituloRelatorio, data.settings.margin.left, 20)
+                    didDrawPage: (data) => pageHeader(data, tituloRelatorio)
                 });
             } else {
+                // --- Página 1: Ranking de Clientes ---
+                const clientes = {};
+                colNotas.forEach(nota => {
+                    const idCliente = nota.tomadorDoc || nota.tomadorRazao;
+                    if (!clientes[idCliente]) {
+                        clientes[idCliente] = {
+                            razaoSocial: nota.tomadorRazao,
+                            cnpj: nota.tomadorDoc,
+                            total: 0,
+                            servicos: new Set()
+                        };
+                    }
+                    clientes[idCliente].total += nota.valorServico;
+                    clientes[idCliente].servicos.add(simplifyServiceDescription(nota.discriminacao));
+                });
+
+                const ranking = Object.values(clientes).sort((a, b) => b.total - a.total);
+                
+                doc.autoTable({
+                    head: [['#', 'Cliente', 'CNPJ/CPF', 'Valor Total', 'Serviços Contratados (Amostra)']],
+                    body: ranking.slice(0, 15).map((cliente, index) => [
+                        index + 1, cliente.razaoSocial, cliente.cnpj,
+                        formatCurrency(cliente.total), Array.from(cliente.servicos).join('; ')
+                    ]),
+                    startY: 35,
+                    margin: { top: 35 },
+                    theme: 'striped',
+                    headStyles: { fillColor: [41, 128, 185], textColor: 255, fontStyle: 'bold' },
+                    styles: { fontSize: 8 },
+                    columnStyles: { 4: { cellWidth: 'auto' } },
+                    didDrawPage: (data) => pageHeader(data, tituloRelatorio)
+                });
+                
+                // --- Página 2: Relatório Sintético ---
+                doc.addPage();
+                const summary = colNotas.reduce((acc, nota) => {
+                    const location = nota.prestacaoLocal || 'Não especificado';
+                    if (!acc[location]) {
+                        acc[location] = { count: 0, valorServico: 0, valorIss: 0, valorLiquido: 0 };
+                    }
+                    acc[location].count++;
+                    acc[location].valorServico += nota.valorServico;
+                    acc[location].valorIss += nota.valorIss;
+                    if (!nota.valorLiquido || nota.valorLiquido === 0) {
+                        nota.valorLiquido = nota.valorServico - nota.valorIR - nota.valorPIS - nota.valorCOFINS - nota.valorCSLL - nota.valorINSS - nota.valorIssRetido - nota.valorDeducao;
+                    }
+                    acc[location].valorLiquido += nota.valorLiquido;
+                    return acc;
+                }, {});
+
+                const summaryBody = Object.entries(summary).map(([location, data]) => [
+                    location, data.count, formatCurrency(data.valorServico),
+                    formatCurrency(data.valorIss), formatCurrency(data.valorLiquido)
+                ]);
+
+                if (summaryBody.length > 0) {
+                    doc.autoTable({
+                        head: [['Local da Prestação', 'Qtd. Notas', 'Valor Total Serviços', 'Valor Total ISS', 'Valor Líquido Total']],
+                        body: summaryBody,
+                        startY: 35,
+                        margin: { top: 35 },
+                        theme: 'striped',
+                        headStyles: { fillColor: [41, 128, 185], textColor: 255, fontStyle: 'bold' },
+                        styles: { fontSize: 9 },
+                        didDrawPage: (data) => pageHeader(data, "Relatório Sintético por Local de Prestação")
+                    });
+                }
+                
+                // --- Página 3 em diante: Detalhamento das Notas ---
+                doc.addPage();
                 const head = [['Nº NFS-e', 'Data emissão', 'Local da Prestação', 'Valor do serviço', 'Base de cálculo ISS Normal', 'Alíquota ISS', 'Valor ISS', 'Valor IR Retido', 'Valor PIS Retido', 'Valor COFINS Retido', 'Valor CSLL Retido', 'Valor INSS Retido', 'Outros Valores', 'Base de Cálculo ISS Retido', 'Valor ISS Retido', 'Valor Líquido NFS-e', 'Status', 'Cód serviço']];
                 let totais = { valServ: 0, baseNorm: 0, issNorm: 0, ir: 0, pis: 0, cofins: 0, csll: 0, inss: 0, outros: 0, baseRet: 0, issRet: 0, liq: 0 };
 
                 const body = colNotas.map(nota => {
+                    if (!nota.valorLiquido || nota.valorLiquido === 0) {
+                        nota.valorLiquido = nota.valorServico - nota.valorIR - nota.valorPIS - nota.valorCOFINS - nota.valorCSLL - nota.valorINSS - nota.valorIssRetido - nota.valorDeducao;
+                    }
                     const baseCalculoNormal = nota.issRetido === "1" ? 0 : nota.valorServico;
                     const vlrIssNormal = nota.issRetido === "1" ? 0 : nota.valorIss;
                     const baseCalculoRetido = nota.issRetido === "1" ? nota.valorServico : 0;
@@ -870,11 +1041,12 @@
                 ]];
 
                 doc.autoTable({
-                    head: head, body: body, foot: foot, startY: 25, theme: 'striped',
+                    head: head, body: body, foot: foot, startY: 35, theme: 'striped',
+                    margin: { top: 35 },
                     headStyles: { fillColor: [41, 128, 185], textColor: 255, fontStyle: 'bold' },
                     footStyles: { fillColor: [232, 232, 232], textColor: 0, fontStyle: 'bold' },
                     styles: { fontSize: 6.5, cellPadding: 1.5 },
-                    didDrawPage: data => doc.text(tituloRelatorio, data.settings.margin.left, 20)
+                    didDrawPage: (data) => pageHeader(data, "Detalhamento das Notas Fiscais")
                 });
             }
             
@@ -891,7 +1063,7 @@
             downloadLinksDiv.innerHTML = '';
             
             log('Iniciando processamento...');
-            const cnpjCliente = cnpjInput.value;
+            const cnpjCliente = cnpjInput.value.replace(/\D/g, '');
 
             const fileContents = await Promise.all(
                 arquivosSelecionados.map(file => readFileAsText(file))
@@ -903,10 +1075,8 @@
             const isTxt = activeTab === 'txt';
 
             if (isTxt) {
-                // Processamento de TXT
                 for (let i = 0; i < fileContents.length; i++) {
                     let content = fileContents[i];
-                    // FIX: Strip BOM (Byte Order Mark) if present, which can break header parsing
                     if (content.charCodeAt(0) === 0xFEFF) {
                         content = content.slice(1);
                     }
@@ -918,7 +1088,6 @@
                     const headers = lines[0].split('\t');
                     for (let j = 1; j < lines.length; j++) {
                         const values = lines[j].split('\t');
-                        // Ignora a linha de total
                         if(values[0]?.toLowerCase() === 'total') continue;
 
                         const notaObj = {};
@@ -932,38 +1101,38 @@
             } else {
                 // Processamento de XML
                 const parser = new DOMParser();
-                let formatoPrimeiroArquivo = null;
 
                 for (let i = 0; i < fileContents.length; i++) {
-                    const xmlString = fileContents[i];
-                    const xmlDoc = parser.parseFromString(xmlString, "application/xml");
-                    
-                    if (xmlDoc.getElementsByTagName("parsererror").length) {
-                        log(`Erro de sintaxe no arquivo "${arquivosSelecionados[i].name}". Ignorado.`, 'error');
-                        continue;
-                    }
+                    try {
+                        const xmlString = fileContents[i];
+                        const xmlDoc = parser.parseFromString(xmlString, "application/xml");
+                        
+                        if (xmlDoc.getElementsByTagName("parsererror").length) {
+                            log(`Erro de sintaxe no arquivo "${arquivosSelecionados[i].name}". Ignorado.`, 'error');
+                            continue;
+                        }
 
-                    let formatoOrigem, listaNotas;
-                    if (xmlDoc.querySelector("NOTA_FISCAL")) {
-                        formatoOrigem = "CG";
-                        listaNotas = xmlDoc.querySelectorAll("NOTA_FISCAL");
-                    } else if (xmlDoc.querySelector("NFe")) {
-                        formatoOrigem = "SIMPLISS"; // Simplificado, ambos usam a mesma base
-                        listaNotas = xmlDoc.querySelectorAll("NFe");
-                    } else {
-                        log(`Formato não reconhecido no arquivo "${arquivosSelecionados[i].name}". Ignorado.`, 'error');
-                        continue;
-                    }
+                        let formatoOrigem, listaNotas;
+                        if (xmlDoc.querySelector("NOTA_FISCAL")) {
+                            formatoOrigem = "CG";
+                            listaNotas = xmlDoc.querySelectorAll("NOTA_FISCAL");
+                        } else if (xmlDoc.querySelector("CompNfse")) {
+                            formatoOrigem = "ABRASF";
+                             listaNotas = xmlDoc.querySelectorAll("InfNfse");
+                        } else if (xmlDoc.querySelector("NFe")) { // Formato genérico/antigo
+                            formatoOrigem = "SIMPLISS";
+                            listaNotas = xmlDoc.querySelectorAll("NFe");
+                        } else {
+                            log(`Formato não reconhecido no arquivo "${arquivosSelecionados[i].name}". Ignorado.`, 'error');
+                            continue;
+                        }
 
-                    if (!formatoPrimeiroArquivo) formatoPrimeiroArquivo = formatoOrigem;
-                    else if (formatoPrimeiroArquivo !== formatoOrigem) {
-                        log(`ERRO: Mistura de formatos de arquivo (${formatoPrimeiroArquivo} vs ${formatoOrigem}).`, 'error');
-                        return;
+                        listaNotas.forEach(notaNode => {
+                            notasConsolidadas.push(mapearXmlParaPadronizado(notaNode, formatoOrigem));
+                        });
+                    } catch (e) {
+                         log(`Erro inesperado ao processar "${arquivosSelecionados[i].name}": ${e.message}`, 'error');
                     }
-
-                    listaNotas.forEach(notaNode => {
-                         notasConsolidadas.push(mapearXmlParaPadronizado(notaNode, formatoOrigem));
-                    });
                 }
             }
             
@@ -1030,9 +1199,31 @@
             }
 
             // Gerar PDFs
-            gerarRelatorioPDF(colPrestados, "Relatório de Serviços Prestados", "Relatorio_Servicos_Prestados.pdf", false);
-            gerarRelatorioPDF(colTomados, "Relatório de Serviços Tomados", "Relatorio_Servicos_Tomados.pdf", false);
-            gerarRelatorioPDF(colCancelados, "Relatório de Notas Canceladas", "Relatorio_Notas_Canceladas.pdf", true);
+            if (colPrestados.length > 0) {
+                const headerInfo = {
+                    razaoSocial: colPrestados[0].prestadorRazao,
+                    cnpj: colPrestados[0].prestadorCnpj,
+                    mesRef: extrairMesReferencia(colPrestados)
+                };
+                gerarRelatorioPDF(colPrestados, "Relatório de Serviços Prestados", "Relatorio_Servicos_Prestados.pdf", false, headerInfo);
+            }
+            if (colTomados.length > 0) {
+                 const headerInfo = {
+                    razaoSocial: colTomados[0].tomadorRazao,
+                    cnpj: colTomados[0].tomadorDoc,
+                    mesRef: extrairMesReferencia(colTomados)
+                };
+                gerarRelatorioPDF(colTomados, "Relatório de Serviços Tomados", "Relatorio_Servicos_Tomados.pdf", false, headerInfo);
+            }
+            if (colCancelados.length > 0) {
+                const headerInfo = {
+                    razaoSocial: colCancelados[0].prestadorRazao,
+                    cnpj: colCancelados[0].prestadorCnpj,
+                    mesRef: extrairMesReferencia(colCancelados)
+                };
+                gerarRelatorioPDF(colCancelados, "Relatório de Notas Canceladas", "Relatorio_Notas_Canceladas.pdf", true, headerInfo);
+            }
+
 
             log('Processamento concluído com sucesso!', 'success');
             processarBtn.disabled = false;
@@ -1069,15 +1260,20 @@
 
         // Seleção e Drag/Drop de arquivos
         function handleFiles(files) {
-            const fileType = activeTab === 'xml' ? '.xml' : '.txt';
+            const allowedExtensions = activeTab === 'xml' ? ['.xml'] : ['.txt', '.csv'];
             
-            arquivosSelecionados = Array.from(files).filter(file => file.name.endsWith(fileType));
+            const validFiles = Array.from(files).filter(file => {
+                const extension = file.name.slice(file.name.lastIndexOf('.')).toLowerCase();
+                return allowedExtensions.includes(extension);
+            });
             
-            if(arquivosSelecionados.length !== files.length) {
-                alert(`Alguns arquivos não eram do tipo ${fileType} e foram ignorados.`);
+            if(validFiles.length !== files.length) {
+                alert(`Alguns arquivos não tinham as extensões permitidas (${allowedExtensions.join(', ')}) e foram ignorados.`);
             }
+            arquivosSelecionados = validFiles;
             atualizarListaArquivos();
         }
+
 
         [dragDropAreaXml, dragDropAreaTxt].forEach(area => {
             area.addEventListener('dragover', (e) => {
