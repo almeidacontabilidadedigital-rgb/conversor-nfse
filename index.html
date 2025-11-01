@@ -583,6 +583,45 @@
             }
             return "N/A";
         }
+
+        function extrairMesAnoParaPasta(notas) {
+            for (const nota of notas) {
+                const dateString = nota.dataEmissao || nota.competencia; // Prioriza dataEmissao
+                if (!dateString) continue;
+
+                try {
+                    let date;
+                    // Handle YYYY-MM-DDTHH:mm:ss or YYYY-MM-DD
+                    if (dateString.includes('-')) {
+                        // Append Z to treat as UTC, preventing timezone shifts
+                        date = new Date(dateString.replace(" ", "T").substring(0, 19) + 'Z');
+                    }
+                    // Handle DD/MM/YYYY HH:mm:ss or DD/MM/YYYY
+                    else if (dateString.includes('/')) {
+                        const parts = dateString.split(' ')[0].split('/');
+                        if (parts.length === 3) {
+                            const [day, month, year] = parts;
+                            // Date.UTC(year, monthIndex, day)
+                            date = new Date(Date.UTC(year, month - 1, day));
+                        }
+                    }
+
+                    if (date && !isNaN(date.getTime())) {
+                        const month = (date.getUTCMonth() + 1).toString().padStart(2, '0');
+                        const year = date.getUTCFullYear();
+                        return `${month}-${year}`;
+                    }
+                } catch (e) {
+                    console.warn(`Could not parse date for folder name: ${dateString}`, e);
+                    continue;
+                }
+            }
+            // Fallback: use current date if no valid date is found in notes
+            const now = new Date();
+            const month = (now.getMonth() + 1).toString().padStart(2, '0');
+            const year = now.getFullYear();
+            return `${month}-${year}`;
+        }
         
         // --- Funções de Mapeamento de Dados ---
 
@@ -1196,10 +1235,15 @@
                 // Gera um ZIP para cada local de prestação
                 for (const local in prestadosPorLocal) {
                     const notasDoLocal = prestadosPorLocal[local];
+                    if (notasDoLocal.length === 0) continue;
+
                     const zip = new JSZip();
-                    notasDoLocal.forEach(n => zip.file(`Prestada_${n.numero}.xml`, gerarXML_CompNfse(n)));
+                    const mesAno = extrairMesAnoParaPasta(notasDoLocal);
+                    const nomeEmpresa = (notasDoLocal[0].prestadorRazao || 'EMPRESA').replace(/[^\w\s-]/g, '').trim();
+                    const folderName = `NFSE EMISSAO PROPRIA ${mesAno} (${nomeEmpresa})`;
+
+                    notasDoLocal.forEach(n => zip.file(`${folderName}/Prestada_${n.numero}.xml`, gerarXML_CompNfse(n)));
                     
-                    // Sanitiza o nome do local para usar no nome do arquivo
                     const nomeArquivoLocal = local.replace(/[\s,.-]+/g, '_').replace(/_{2,}/g, '_').replace(/_$/, '');
                     
                     zip.generateAsync({ type: "blob" }).then(blob => {
@@ -1207,15 +1251,20 @@
                     });
                 }
 
-                // Lógica para tomados e cancelados permanece a mesma
-                colTomados.forEach(n => zipTomados.file(`Tomada_${n.numero}.xml`, gerarXML_CompNfse(n)));
+                if (colTomados.length > 0) {
+                    const mesAno = extrairMesAnoParaPasta(colTomados);
+                    const nomeEmpresa = (colTomados[0].tomadorRazao || 'EMPRESA').replace(/[^\w\s-]/g, '').trim();
+                    const folderName = `NFSE EMISSAO TERCEIROS ${mesAno} (${nomeEmpresa})`;
+                    colTomados.forEach(n => zipTomados.file(`${folderName}/Tomada_${n.numero}.xml`, gerarXML_CompNfse(n)));
+                    zipTomados.generateAsync({type:"blob"}).then(blob => triggerDownload(blob, "ServicosTomados_Individuais.zip"));
+                }
+
                 colCancelados.forEach(n => {
                     const xml = gerarXML_PedidoCancelamento(n);
                     const xmlFinal = `${xmlHeader}<CancelarNfseEnvio xmlns="http://www.abrasf.org.br/nfse.xsd">${xml}</CancelarNfseEnvio>`;
                     zipCancelados.file(`Cancelada_${n.numero}.xml`, xmlFinal);
                 });
 
-                if (colTomados.length > 0) zipTomados.generateAsync({type:"blob"}).then(blob => triggerDownload(blob, "ServicosTomados_Individuais.zip"));
                 if (colCancelados.length > 0) zipCancelados.generateAsync({type:"blob"}).then(blob => triggerDownload(blob, "ServicosPrestadosCancelados_Individuais.zip"));
             }
 
