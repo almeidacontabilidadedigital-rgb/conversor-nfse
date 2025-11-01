@@ -144,8 +144,8 @@
         let arquivosSelecionados = [];
         let activeTab = 'xml';
         let codigosIBGE = {};
-        // MODIFICAÇÃO: Mapa otimizado para busca normalizada
-        let codigosIBGENormalizados = {};
+        let normalizedCodigosIBGE = {};
+        let codigosPorUF = {};
 
         // --- Referências aos Elementos do DOM ---
         const cnpjInput = document.getElementById('cnpjCliente');
@@ -164,8 +164,6 @@
         const logMessagesDiv = document.getElementById('logMessages');
         const downloadLinksDiv = document.getElementById('downloadLinks');
 
-        // --- REMOVIDO o mapaExcecoesIBGE obsoleto ---
-
         // --- Funções de UI e Eventos ---
 
         /** Adiciona uma mensagem ao log na tela. */
@@ -182,164 +180,96 @@
             logMessagesDiv.scrollTop = logMessagesDiv.scrollHeight;
         }
         
-        // --- Funções Utilitárias ---
+        // --- Funções Utilitárias de Busca ---
         
-        function readFileAsText(file) {
-            return new Promise((resolve, reject) => {
-                const reader = new FileReader();
-                reader.onload = (event) => {
-                    resolve(event.target.result);
-                };
-                reader.onerror = (error) => reject(error);
-                reader.readAsText(file, 'ISO-8859-1');
-            });
-        }
+        /** Calcula a distância de Levenshtein entre duas strings. */
+        function levenshteinDistance(a, b) {
+            if (a.length === 0) return b.length;
+            if (b.length === 0) return a.length;
+            const matrix = [];
 
-        /** Normalização leve para exibição (remove acentos, parênteses, etc.) */
-        function normalizeCidadeNome(text) {
-            if (!text) return "";
-            return text
-                .normalize("NFD") // Separa os acentos das letras
-                .replace(/[\u0300-\u036f]/g, "") // Remove os acentos
-                .replace(/'/g, "") // Remove apóstrofos (ex: D'AGUA vira DAGUA)
-                .replace(/\(.*?\)/g, "") // Remove qualquer texto entre parênteses
-                .toUpperCase() // Converte para maiúsculas
-                .trim(); // Remove espaços no início e no fim
-        }
+            for (let i = 0; i <= b.length; i++) { matrix[i] = [i]; }
+            for (let j = 0; j <= a.length; j++) { matrix[0][j] = j; }
 
-        /** MODIFICAÇÃO: Normalização agressiva para chaves de busca (remove acentos, espaços, preposições, etc.) */
-        function normalizeStringParaChave(text) {
-            if (!text) return "";
-            return text
-                .normalize("NFD") // Separa os acentos das letras
-                .replace(/[\u0300-\u036f]/g, "") // Remove os acentos
-                .toUpperCase() // Converte para maiúsculas
-                .replace(/\(.*\)/g, "") // Remove qualquer texto entre parênteses
-                .replace(/'/g, "") // Remove apóstrofos (ex: D'OESTE -> DOESTE)
-                .replace(/[-.]/g, "") // Remove hífens e pontos
-                // Remove preposições comuns que causam falhas (D', DE, DO, DA, DAS, DOS)
-                .replace(/\b(D|DA|DE|DO|DAS|DOS)\b/g, '')
-                .replace(/\s+/g, ""); // Remove TODOS os espaços
-        }
-
-        // +++ INÍCIO DA NOVA FUNÇÃO (Levenshtein) +++
-        /**
-         * Calcula a distância Levenshtein entre duas strings (custo de edição).
-         * @param {string} s1 String 1
-         * @param {string} s2 String 2
-         * @returns {number} A distância de edição
-         */
-        function levenshtein(s1, s2) {
-            if (!s1) return s2 ? s2.length : 0;
-            if (!s2) return s1.length;
-
-            const m = s1.length;
-            const n = s2.length;
-            let v0 = new Array(n + 1);
-            let v1 = new Array(n + 1);
-
-            for (let i = 0; i <= n; i++) {
-                v0[i] = i;
-            }
-
-            for (let i = 0; i < m; i++) {
-                v1[0] = i + 1;
-                for (let j = 0; j < n; j++) {
-                    const cost = (s1[i] === s2[j]) ? 0 : 1;
-                    v1[j + 1] = Math.min(
-                        v1[j] + 1,      // Deletion
-                        v0[j + 1] + 1,  // Insertion
-                        v0[j] + cost    // Substitution
-                    );
-                }
-                let temp = v0;
-                v0 = v1;
-                v1 = temp;
-            }
-            return v0[n];
-        }
-        // +++ FIM DA NOVA FUNÇÃO (Levenshtein) +++
-
-        // +++ INÍCIO DE NOVAS FUNÇÕES (Relatório PDF) +++
-
-        /**
-         * Extrai o mês de referência mais comum de uma coleção de notas.
-         * @param {Array} colNotas - A coleção de notas.
-         * @returns {string} O mês/ano de referência (ex: "10/2024").
-         */
-        function getMesReferencia(colNotas) {
-            if (!colNotas || colNotas.length === 0) return 'N/A';
-
-            const contagemMeses = {};
-            let mesAnoMaisComum = 'N/A';
-            let maxContagem = 0;
-
-            colNotas.forEach(nota => {
-                const comp = nota.competencia || nota.dataEmissao; // Usa competência, senão data de emissão
-                let mesAno = 'N/A';
-
-                if (comp) {
-                    // Tenta formato YYYY-MM-DD...
-                    if (comp.includes('-')) {
-                        const parts = comp.split('T')[0].split('-');
-                        if (parts.length === 3) {
-                            mesAno = `${parts[1]}/${parts[0]}`;
-                        }
-                    // Tenta formato DD/MM/YYYY...
-                    } else if (comp.includes('/')) {
-                        const parts = comp.split(' ')[0].split('/');
-                        if (parts.length === 3) {
-                            mesAno = `${parts[1]}/${parts[2]}`;
-                        }
+            for (let i = 1; i <= b.length; i++) {
+                for (let j = 1; j <= a.length; j++) {
+                    if (b.charAt(i - 1) === a.charAt(j - 1)) {
+                        matrix[i][j] = matrix[i - 1][j - 1];
+                    } else {
+                        matrix[i][j] = Math.min(matrix[i - 1][j - 1] + 1, matrix[i][j - 1] + 1, matrix[i - 1][j] + 1);
                     }
                 }
-                
-                contagemMeses[mesAno] = (contagemMeses[mesAno] || 0) + 1;
-                if (contagemMeses[mesAno] > maxContagem) {
-                    maxContagem = contagemMeses[mesAno];
-                    mesAnoMaisComum = mesAno;
-                }
-            });
+            }
+            return matrix[b.length][a.length];
+        }
 
-            return mesAnoMaisComum;
+        /** Normaliza uma string para busca, removendo acentos, espaços e caracteres especiais. */
+        function normalizeForLookup(text) {
+            if (!text) return "";
+            return text
+                .normalize("NFD")
+                .replace(/[\u0300-\u036f]/g, "") // Remove acentos
+                .toUpperCase()
+                .replace(/[ '-./()]/g, ""); // Remove espaços, apóstrofos, hífens, etc.
         }
 
         /**
-         * Agrega e ranqueia clientes pelo valor total de serviço.
-         * @param {Array} colNotas - A coleção de notas de serviços prestados.
-         * @returns {Array} Um array de clientes ordenado por valor.
+         * Encontra o código IBGE para uma cidade e UF, com tolerância a pequenas diferenças.
+         * @param {string} cidade O nome da cidade.
+         * @param {string} uf A sigla do estado (UF).
+         * @returns {string} O código IBGE ou '9999999' se não encontrado.
          */
-        function gerarRankingClientes(colNotas) {
-            const clienteMap = new Map();
+        function findIBGECode(cidade, uf) {
+            if (!cidade || !uf) {
+                return '9999999'; // Código para "Exterior" ou erro
+            }
 
-            colNotas.forEach(nota => {
-                const doc = nota.tomadorDoc || 'NAO_INFORMADO';
-                const razao = nota.tomadorRazao || 'NAO_INFORMADO';
+            const ufUpper = uf.toUpperCase();
+            
+            // 1. Tentativa de busca normalizada (rápida), que cobre a maioria dos casos
+            const normalizedKey = normalizeForLookup(`${cidade}|${ufUpper}`);
+            if (normalizedCodigosIBGE[normalizedKey]) {
+                return normalizedCodigosIBGE[normalizedKey];
+            }
+            
+            // 2. Tentativa de busca por aproximação (Levenshtein) dentro da UF correta
+            const cidadesDaUF = codigosPorUF[ufUpper];
+            if (cidadesDaUF) {
+                const normalizedCidadeInput = normalizeForLookup(cidade);
+                let bestMatch = null;
+                let minDistance = Infinity;
 
-                if (!clienteMap.has(doc)) {
-                    clienteMap.set(doc, {
-                        razao: razao,
-                        doc: doc,
-                        totalConsumido: 0,
-                        servicos: new Set()
-                    });
+                for (const cidadeInfo of cidadesDaUF) {
+                    const distance = levenshteinDistance(normalizedCidadeInput, cidadeInfo.normalized);
+                    
+                    if (distance < minDistance) {
+                        minDistance = distance;
+                        bestMatch = cidadeInfo;
+                    }
+                    
+                    // Se a distância for 0, é um match perfeito, podemos parar.
+                    if (minDistance === 0) {
+                        break;
+                    }
                 }
 
-                const cliente = clienteMap.get(doc);
-                cliente.totalConsumido += nota.valorServico;
-                cliente.servicos.add(nota.itemLista); // Agrega os códigos de serviço
-            });
-
-            const ranking = Array.from(clienteMap.values());
-            // Ordena do maior para o menor
-            ranking.sort((a, b) => b.totalConsumido - a.totalConsumido);
-
-            return ranking;
+                // Considera um match se a distância for pequena (ex: <= 2).
+                // A distância de Levenshtein é uma boa métrica para erros de digitação.
+                // Uma tolerância de 2 geralmente cobre a maioria dos erros comuns.
+                if (bestMatch && minDistance <= 2) {
+                     // Cache para futuras buscas
+                    normalizedCodigosIBGE[normalizedKey] = bestMatch.code;
+                    log(`Código IBGE para "${cidade} - ${uf}" encontrado por aproximação como "${bestMatch.original}".`, 'info');
+                    return bestMatch.code;
+                }
+            }
+            
+            // Se todas as tentativas falharem
+            log(`Código IBGE não encontrado para "${cidade} - ${uf}". Verifique o nome da cidade e UF.`, 'error');
+            return '9999999';
         }
 
-        // +++ FIM DAS NOVAS FUNÇÕES (Relatório PDF) +++
-        
-        // --- Carregamento Assíncrono de Dados ---
+        // --- Carregamento e Pré-processamento de Dados ---
         async function carregarDadosMunicipios() {
             try {
                 const response = await fetch('./municipios.json');
@@ -347,35 +277,33 @@
                     throw new Error(`HTTP error! status: ${response.status}`);
                 }
                 codigosIBGE = await response.json();
-                console.log('Dados dos municípios carregados com sucesso.');
+                
+                // Pré-processa os dados para buscas rápidas e por aproximação
+                for (const key in codigosIBGE) {
+                    const [cidade, uf] = key.split('|');
+                    if (!cidade || !uf) continue;
 
-                // --- INÍCIO DA MODIFICAÇÃO ---
-                // Cria o mapa de busca normalizado para lidar com divergências de nomes
-                log('Criando índice de busca normalizado para municípios...');
-                codigosIBGENormalizados = {};
-                for (const chaveOriginal in codigosIBGE) {
-                    if (Object.hasOwnProperty.call(codigosIBGE, chaveOriginal)) {
-                        const [cidade, uf] = chaveOriginal.split('|');
-                        if (!cidade || !uf) continue; // Pula chaves inválidas
-                        
-                        // A chave normalizada remove espaços, preposições, acentos, etc.
-                        const chaveNormalizada = normalizeStringParaChave(cidade) + '|' + uf.toUpperCase();
-                        
-                        if (!codigosIBGENormalizados[chaveNormalizada]) {
-                             codigosIBGENormalizados[chaveNormalizada] = codigosIBGE[chaveOriginal];
-                        }
+                    // Mapa para busca rápida normalizada
+                    const normalizedKey = normalizeForLookup(key);
+                    normalizedCodigosIBGE[normalizedKey] = codigosIBGE[key];
+                    
+                    // Mapa agrupado por UF para busca por aproximação
+                    if (!codigosPorUF[uf]) {
+                        codigosPorUF[uf] = [];
                     }
+                    codigosPorUF[uf].push({
+                        original: cidade,
+                        normalized: normalizeForLookup(cidade),
+                        code: codigosIBGE[key]
+                    });
                 }
-                log('Índice de busca criado.');
-                // --- FIM DA MODIFICAÇÃO ---
-
+                console.log('Dados dos municípios carregados e pré-processados com sucesso.');
             } catch (error) {
-                console.error('Falha ao carregar o arquivo municipios.json:', error);
+                console.error('Falha ao carregar ou processar o arquivo municipios.json:', error);
                 log('Erro crítico: Não foi possível carregar os dados dos municípios. A conversão pode falhar.', 'error');
             }
         }
         
-        // Aguarda o carregamento dos dados antes de continuar a execução
         await carregarDadosMunicipios();
 
         // --- Dicionários de Mapeamento ---
@@ -512,111 +440,10 @@
                     resolve(event.target.result);
                 };
                 reader.onerror = (error) => reject(error);
-                reader.readAsText(file, 'ISO-8859-1');
+                reader.readAsText(file, 'UTF-8');
             });
         }
         
-        function normalizeString(text) {
-            if (!text) return "";
-            return text
-                .normalize("NFD") // Separa os acentos das letras
-                .replace(/[\u0300-\u036f]/g, "") // Remove os acentos
-                .replace(/'/g, "") // Remove apóstrofos (ex: D'AGUA vira DAGUA)
-                .replace(/\(.*?\)/g, "") // Remove qualquer texto entre parênteses
-                .toUpperCase() // Converte para maiúsculas
-                .trim(); // Remove espaços no início e no fim
-        }
-        
-        // MODIFICAÇÃO: Função de busca de IBGE atualizada
-        function findIBGECode(cidade, uf) {
-            if (!cidade || !uf) return "";
-            
-            // --- INÍCIO DA MODIFICAÇÃO (Remoção de Sufixo) ---
-            
-            const ufUpper = uf.toUpperCase();
-            let cidadeLimpa = cidade.trim(); // Remove espaços das pontas
-            
-            // Remove o sufixo "-UF" da string da cidade, se existir
-            // Ex: "POXOREO-MT" -> "POXOREO"
-            const sufixoUf = `-${ufUpper}`;
-            if (cidadeLimpa.toUpperCase().endsWith(sufixoUf)) {
-                // Remove o sufixo. Ex: "POXOREO-MT" (length 10), sufixo "-MT" (length 3)
-                // Queremos "POXOREO" (length 7)
-                cidadeLimpa = cidadeLimpa.substring(0, cidadeLimpa.length - sufixoUf.length).trim();
-            }
-            // --- FIM DA MODIFICAÇÃO (Remoção de Sufixo) ---
-
-            // Agora, todas as buscas usarão 'cidadeLimpa'
-            const cidadeNormalizadaChave = normalizeStringParaChave(cidadeLimpa);
-            const chaveBuscaRapida = `${cidadeNormalizadaChave}|${ufUpper}`; // Chave para os mapas
-            
-            // --- REMOVIDA a verificação do mapaExcecoesIBGE ---
-
-            // 1. Tenta a busca normalizada (mais robusta e rápida)
-            let code = codigosIBGENormalizados[chaveBuscaRapida];
-
-            if (code) {
-                log(`Código IBGE encontrado no mapa de exceções para ${cidadeLimpa}-${ufUpper}.`, 'success');
-                return code;
-            }
-            // +++ FIM DA MODIFICAÇÃO (Verifica Exceções) +++
-
-            // 2. Tenta a busca normalizada (mais robusta e rápida)
-            code = codigosIBGENormalizados[chaveBuscaRapida];
-
-            if (code) {
-                return code; // Encontrado na busca rápida
-            }
-
-            // 2. Fallback: Tenta a busca "original" (menos robusta)
-            const chaveOriginal = `${normalizeCidadeNome(cidadeLimpa)}|${ufUpper}`;
-            code = codigosIBGE[chaveOriginal];
-            
-            if (code) {
-                return code; // Encontrado na busca original
-            }
-
-            // 3. Fallback: Tenta a busca por semelhança (Levenshtein) - LENTA
-            log(`Código não encontrado para ${normalizeCidadeNome(cidadeLimpa)}-${ufUpper}. Tentando busca por semelhança...`, 'info');
-
-            let melhorDistancia = Infinity;
-            let melhorCodigo = "";
-            const LIMITE_DISTANCIA = 1; // Aceita apenas 1 erro (typo)
-
-            for (const chaveJson in codigosIBGE) {
-                const [nomeJson, ufJson] = chaveJson.split('|');
-                
-                // Só compara se a UF for a mesma
-                if (ufJson === ufUpper) {
-                    const nomeJsonNormalizado = normalizeStringParaChave(nomeJson);
-                    const distancia = levenshtein(cidadeNormalizadaChave, nomeJsonNormalizado);
-
-                    if (distancia < melhorDistancia) {
-                        melhorDistancia = distancia;
-                        melhorCodigo = codigosIBGE[chaveJson];
-                    }
-                    
-                    // Se a distância for 0 (caso que a normalização do passo 1 falhou por algum motivo)
-                    if (distancia === 0) {
-                         melhorDistancia = 0;
-                         melhorCodigo = codigosIBGE[chaveJson];
-                         break; // Encontrou correspondência exata normalizada
-                    }
-                }
-            }
-
-            // Verifica se a melhor correspondência encontrada está dentro do limite aceitável
-            if (melhorDistancia <= LIMITE_DISTANCIA) {
-                 log(`Correspondência por semelhança encontrada para ${normalizeCidadeNome(cidadeLimpa)}-${ufUpper} (Distância: ${melhorDistancia}).`, 'success');
-                 return melhorCodigo;
-            }
-            
-            // 4. Log de erro final
-            log(`Código IBGE não encontrado para ${normalizeCidadeNome(cidadeLimpa)}-${ufUpper} na lista local. [Busca por semelhança falhou]`, 'error');
-            
-            return ""; // Não encontrou
-        }
-
         function getNodeText(parentNode, selector, defaultValue = "") {
             // Suporte para seletores de tag simples (mais rápido)
             if (/^[a-zA-Z0-9_]+$/.test(selector)) {
@@ -727,7 +554,7 @@
                 valorCSLL: safeParseFloat(getNodeText(noNota, formato === 'CG' ? "VALOR_CSLL" : "ValorCSLL")),
                 issRetido: (formato === 'CG' ? (issRetidoCG > 0 ? "1" : "2") : (getNodeText(noNota, "ISSRetido", "0") === "1" ? "1" : "2")),
                 valorIssRetido: issRetidoCG > 0 ? issRetidoCG : (getNodeText(noNota, "ISSRetido", "0") === "1" ? safeParseFloat(getNodeText(noNota, "ValorISS")) : 0),
-                exigibilidadeISS: (formato === 'CG' ? (normalizeString(prestacaoCidade) === normalizeString(prestadorCidade) || prestacaoCidade === "" ? "1" : "2") : "1"),
+                exigibilidadeISS: (formato === 'CG' ? (normalizeForLookup(prestacaoCidade) === normalizeForLookup(prestadorCidade) || prestacaoCidade === "" ? "1" : "2") : "1"),
                 itemLista: mapaServicos[codServicoOriginal] || codServicoOriginal,
                 codCnae: getNodeText(noNota, formato === 'CG' ? "CODIGO_ATIVIDADE" : "Prestador > CodigoCnaePrincipal"),
                 codMunPrestacao: findIBGECode(prestacaoCidade, prestacaoUf),
@@ -979,46 +806,11 @@
 </Pedido>`;
         }
         
-        // MODIFICAÇÃO: Assinatura e lógica da função de PDF alteradas
-        function gerarRelatorioPDF(colNotas, tituloRelatorio, nomeArquivo, isCancelada, headerInfo, rankingData = null) {
-            if (colNotas.length === 0 && (!rankingData || rankingData.length === 0)) {
-                log(`Nenhum dado para gerar o relatório: ${nomeArquivo}`, 'info');
-                return; // Não gera PDF se não houver notas nem ranking (para o caso de prestados)
-            }
-            if (isCancelada && colNotas.length === 0) {
-                 log(`Nenhuma nota cancelada para gerar o relatório: ${nomeArquivo}`, 'info');
-                return; // Não gera PDF de cancelados se não houver notas
-            }
-             if (!isCancelada && colNotas.length === 0 && (rankingData && rankingData.length === 0)) {
-                 log(`Nenhum dado para gerar o relatório: ${nomeArquivo}`, 'info');
-                return; // Não gera PDF de tomados se não houver notas
-            }
-
+        function gerarRelatorioPDF(colNotas, tituloRelatorio, nomeArquivo, isCancelada) {
+            if (colNotas.length === 0) return;
 
             const doc = new jsPDF({ orientation: 'landscape' });
-            const pageMargin = 14;
-
-            /** Função para desenhar o cabeçalho em cada página */
-            const drawHeader = (data, titulo) => {
-                doc.setFontSize(16);
-                doc.setFont('helvetica', 'bold');
-                doc.text(titulo, pageMargin, 15);
-
-                doc.setFontSize(9);
-                doc.setFont('helvetica', 'normal');
-                
-                // MODIFICAÇÃO: Corrigido para usar a variável passada em 'headerInfo'
-                const cnpjFormatado = headerInfo.cnpjEmpresa; 
-
-                doc.text(`Empresa: ${headerInfo.nomeEmpresa}`, pageMargin, 22);
-                doc.text(`CNPJ: ${cnpjFormatado}`, doc.internal.pageSize.width / 2, 22, { align: 'center' });
-                doc.text(`Mês Referência: ${headerInfo.mesReferencia}`, doc.internal.pageSize.width - pageMargin, 22, { align: 'right' });
-                
-                // Linha divisória
-                doc.setDrawColor(200);
-                doc.line(pageMargin, 25, doc.internal.pageSize.width - pageMargin, 25);
-            };
-
+            
             if (isCancelada) {
                 const head = [['Nº NFS-e', 'Data Emissão', 'Local da Prestação', 'Data Cancelamento', 'Status']];
                 const body = colNotas.map(nota => [
@@ -1031,110 +823,215 @@
                  doc.autoTable({
                     head: head,
                     body: body,
-                    startY: 30, // Posição Y inicial abaixo do cabeçalho
+                    startY: 25,
                     theme: 'striped',
                     headStyles: { fillColor: [41, 128, 185], textColor: 255, fontStyle: 'bold' },
-                    styles: { fontSize: 8, cellPadding: 1.5 },
-                    margin: { top: 30, left: pageMargin, right: pageMargin, bottom: 15 },
-                    didDrawPage: (data) => drawHeader(data, tituloRelatorio) // Adiciona cabeçalho
+                    styles: { fontSize: 8 },
+                    didDrawPage: data => doc.text(tituloRelatorio, data.settings.margin.left, 20)
                 });
             } else {
-                // Relatório principal (Prestados ou Tomados)
-                if (colNotas.length > 0) {
-                    const head = [['Nº NFS-e', 'Data emissão', 'Local da Prestação', 'Valor do serviço', 'Base de cálculo ISS Normal', 'Alíquota ISS', 'Valor ISS', 'Valor IR Retido', 'Valor PIS Retido', 'Valor COFINS Retido', 'Valor CSLL Retido', 'Valor INSS Retido', 'Outros Valores', 'Base de Cálculo ISS Retido', 'Valor ISS Retido', 'Valor Líquido NFS-e', 'Status', 'Cód serviço']];
-                    let totais = { valServ: 0, baseNorm: 0, issNorm: 0, ir: 0, pis: 0, cofins: 0, csll: 0, inss: 0, outros: 0, baseRet: 0, issRet: 0, liq: 0 };
+                const head = [['Nº NFS-e', 'Data emissão', 'Local da Prestação', 'Valor do serviço', 'Base de cálculo ISS Normal', 'Alíquota ISS', 'Valor ISS', 'Valor IR Retido', 'Valor PIS Retido', 'Valor COFINS Retido', 'Valor CSLL Retido', 'Valor INSS Retido', 'Outros Valores', 'Base de Cálculo ISS Retido', 'Valor ISS Retido', 'Valor Líquido NFS-e', 'Status', 'Cód serviço']];
+                let totais = { valServ: 0, baseNorm: 0, issNorm: 0, ir: 0, pis: 0, cofins: 0, csll: 0, inss: 0, outros: 0, baseRet: 0, issRet: 0, liq: 0 };
 
-                    const body = colNotas.map(nota => {
-                        const baseCalculoNormal = nota.issRetido === "1" ? 0 : nota.valorServico;
-                        const vlrIssNormal = nota.issRetido === "1" ? 0 : nota.valorIss;
-                        const baseCalculoRetido = nota.issRetido === "1" ? nota.valorServico : 0;
-                        
-                        totais.valServ += nota.valorServico;
-                        totais.baseNorm += baseCalculoNormal;
-                        totais.issNorm += vlrIssNormal;
-                        totais.ir += nota.valorIR;
-                        totais.pis += nota.valorPIS;
-                        totais.cofins += nota.valorCOFINS;
-                        totais.csll += nota.valorCSLL;
-                        totais.inss += nota.valorINSS;
-                        totais.outros += nota.valorDeducao;
-                        totais.baseRet += baseCalculoRetido;
-                        totais.issRet += nota.valorIssRetido;
-                        totais.liq += nota.valorLiquido;
-
-                        return [
-                            nota.numero, (nota.dataEmissao || '').split(' ')[0], nota.prestacaoLocal, formatCurrency(nota.valorServico),
-                            formatCurrency(baseCalculoNormal), `${(nota.aliquota || 0).toFixed(2)}%`, formatCurrency(vlrIssNormal),
-                            formatCurrency(nota.valorIR), formatCurrency(nota.valorPIS), formatCurrency(nota.valorCOFINS), formatCurrency(nota.valorCSLL), formatCurrency(nota.valorINSS),
-                            formatCurrency(nota.valorDeducao), formatCurrency(baseCalculoRetido), formatCurrency(nota.valorIssRetido),
-                            formatCurrency(nota.valorLiquido), 'Autorizada', nota.itemLista
-                        ];
-                    });
+                const body = colNotas.map(nota => {
+                    const baseCalculoNormal = nota.issRetido === "1" ? 0 : nota.valorServico;
+                    const vlrIssNormal = nota.issRetido === "1" ? 0 : nota.valorIss;
+                    const baseCalculoRetido = nota.issRetido === "1" ? nota.valorServico : 0;
                     
-                    const foot = [[
-                        { content: 'TOTAIS', colSpan: 3, styles: { halign: 'right', fontStyle: 'bold' } },
-                        formatCurrency(totais.valServ), formatCurrency(totais.baseNorm), '', formatCurrency(totais.issNorm),
-                        formatCurrency(totais.ir), formatCurrency(totais.pis), formatCurrency(totais.cofins), formatCurrency(totais.csll), formatCurrency(totais.inss),
-                        formatCurrency(totais.outros), formatCurrency(totais.baseRet), formatCurrency(totais.issRet),
-                        formatCurrency(totais.liq), '', ''
-                    ]];
+                    totais.valServ += nota.valorServico;
+                    totais.baseNorm += baseCalculoNormal;
+                    totais.issNorm += vlrIssNormal;
+                    totais.ir += nota.valorIR;
+                    totais.pis += nota.valorPIS;
+                    totais.cofins += nota.valorCOFINS;
+                    totais.csll += nota.valorCSLL;
+                    totais.inss += nota.valorINSS;
+                    totais.outros += nota.valorDeducao;
+                    totais.baseRet += baseCalculoRetido;
+                    totais.issRet += nota.valorIssRetido;
+                    totais.liq += nota.valorLiquido;
 
-                    doc.autoTable({
-                        head: head, 
-                        body: body, 
-                        foot: foot, 
-                        startY: 30, // Posição Y inicial abaixo do cabeçalho
-                        theme: 'striped',
-                        headStyles: { fillColor: [41, 128, 185], textColor: 255, fontStyle: 'bold' },
-                        footStyles: { fillColor: [232, 232, 232], textColor: 0, fontStyle: 'bold' },
-                        styles: { fontSize: 7, cellPadding: 1.2 }, // Fonte levemente maior
-                        margin: { top: 30, left: pageMargin, right: pageMargin, bottom: 15 },
-                        didDrawPage: (data) => drawHeader(data, tituloRelatorio) // Adiciona cabeçalho
-                    });
-                }
+                    return [
+                        nota.numero, (nota.dataEmissao || '').split(' ')[0], nota.prestacaoLocal, formatCurrency(nota.valorServico),
+                        formatCurrency(baseCalculoNormal), `${(nota.aliquota || 0).toFixed(2)}%`, formatCurrency(vlrIssNormal),
+                        formatCurrency(nota.valorIR), formatCurrency(nota.valorPIS), formatCurrency(nota.valorCOFINS), formatCurrency(nota.valorCSLL), formatCurrency(nota.valorINSS),
+                        formatCurrency(nota.valorDeducao), formatCurrency(baseCalculoRetido), formatCurrency(nota.valorIssRetido),
+                        formatCurrency(nota.valorLiquido), 'Autorizada', nota.itemLista
+                    ];
+                });
+                
+                const foot = [[
+                    { content: 'TOTAIS', colSpan: 3, styles: { halign: 'right', fontStyle: 'bold' } },
+                    formatCurrency(totais.valServ), formatCurrency(totais.baseNorm), '', formatCurrency(totais.issNorm),
+                    formatCurrency(totais.ir), formatCurrency(totais.pis), formatCurrency(totais.cofins), formatCurrency(totais.csll), formatCurrency(totais.inss),
+                    formatCurrency(totais.outros), formatCurrency(totais.baseRet), formatCurrency(totais.issRet),
+                    formatCurrency(totais.liq), '', ''
+                ]];
 
-                // --- INÍCIO DA MODIFICAÇÃO: Adiciona página de Ranking ---
-                if (rankingData && rankingData.length > 0) {
-                    // Adiciona nova página apenas se já houver uma página anterior (lista de notas)
-                    if (colNotas.length > 0) {
-                        doc.addPage();
-                    }
-                    
-            // MODIFICAÇÃO: Coleta dados e passa para a função de gerar PDF
-            // Tenta obter o nome da empresa a partir dos dados processados
-            let nomeEmpresa = 'Empresa (Não identificado)';
-            // MODIFICAÇÃO: Pega o CNPJ do XML (como solicitado) em vez do input
-            let cnpjEmpresa = cnpjCliente; // Default para o input
-
-            if (colPrestados.length > 0) {
-                nomeEmpresa = colPrestados[0].prestadorRazao;
-                cnpjEmpresa = colPrestados[0].prestadorCnpj; // Pega o CNPJ do prestador
-            } else if (colTomados.length > 0) {
-                // Se não prestou, pega o nome de tomador (assumindo que é a mesma empresa)
-                const primeiroTomador = colTomados.find(n => n.tomadorDoc === cnpjCliente);
-                if (primeiroTomador) {
-                    nomeEmpresa = primeiroTomador.tomadorRazao;
-                    cnpjEmpresa = primeiroTomador.tomadorDoc; // Pega o CNPJ do tomador
-                }
-            } else if (colCancelados.length > 0) {
-                nomeEmpresa = colCancelados[0].prestadorRazao;
-                cnpjEmpresa = colCancelados[0].prestadorCnpj; // Pega o CNPJ do prestador
+                doc.autoTable({
+                    head: head, body: body, foot: foot, startY: 25, theme: 'striped',
+                    headStyles: { fillColor: [41, 128, 185], textColor: 255, fontStyle: 'bold' },
+                    footStyles: { fillColor: [232, 232, 232], textColor: 0, fontStyle: 'bold' },
+                    styles: { fontSize: 6.5, cellPadding: 1.5 },
+                    didDrawPage: data => doc.text(tituloRelatorio, data.settings.margin.left, 20)
+                });
             }
             
-            // Formata o CNPJ que foi extraído dos dados
-            const cnpjEmpresaFormatado = cnpjEmpresa.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5');
+            triggerDownload(doc.output('blob'), nomeArquivo);
+        }
 
-            // Gera os dados de cabeçalho para cada relatório
-            const headerInfoPrestados = { nomeEmpresa, cnpjEmpresa: cnpjEmpresaFormatado, mesReferencia: getMesReferencia(colPrestados.length > 0 ? colPrestados : colCancelados) }; // Usa notas canceladas se não houver prestadas
-            const headerInfoTomados = { nomeEmpresa, cnpjEmpresa: cnpjEmpresaFormatado, mesReferencia: getMesReferencia(colTomados) };
-            const headerInfoCancelados = { nomeEmpresa, cnpjEmpresa: cnpjEmpresaFormatado, mesReferencia: getMesReferencia(colCancelados) };
+        // --- Lógica Principal de Processamento ---
 
-            // Gera o ranking APENAS para serviços prestados
-            const ranking = gerarRankingClientes(colPrestados);
+        async function processarArquivos() {
+            processarBtn.disabled = true;
+            processarBtn.textContent = 'Processando...';
+            resultadosDiv.classList.remove('hidden');
+            logMessagesDiv.innerHTML = '';
+            downloadLinksDiv.innerHTML = '';
+            
+            log('Iniciando processamento...');
+            const cnpjCliente = cnpjInput.value;
 
-            gerarRelatorioPDF(colPrestados, "Relatório de Serviços Prestados", "Relatorio_Servicos_Prestados.pdf", false, headerInfoPrestados, ranking);
-            gerarRelatorioPDF(colTomados, "Relatório de Serviços Tomados", "Relatorio_Servicos_Tomados.pdf", false, headerInfoTomados, null);
-            gerarRelatorioPDF(colCancelados, "Relatório de Notas Canceladas", "Relatorio_Notas_Canceladas.pdf", true, headerInfoCancelados, null);
+            const fileContents = await Promise.all(
+                arquivosSelecionados.map(file => readFileAsText(file))
+            );
+
+            log(`Carregados ${fileContents.length} arquivos na memória.`);
+
+            let notasConsolidadas = [];
+            const isTxt = activeTab === 'txt';
+
+            if (isTxt) {
+                // Processamento de TXT
+                for (let i = 0; i < fileContents.length; i++) {
+                    let content = fileContents[i];
+                    // FIX: Strip BOM (Byte Order Mark) if present, which can break header parsing
+                    if (content.charCodeAt(0) === 0xFEFF) {
+                        content = content.slice(1);
+                    }
+                    const lines = content.split(/\r?\n/).filter(line => line.trim() !== '');
+                    if (lines.length < 2) {
+                        log(`Arquivo "${arquivosSelecionados[i].name}" está vazio ou não tem dados.`, 'error');
+                        continue;
+                    }
+                    const headers = lines[0].split('\t');
+                    for (let j = 1; j < lines.length; j++) {
+                        const values = lines[j].split('\t');
+                        // Ignora a linha de total
+                        if(values[0]?.toLowerCase() === 'total') continue;
+
+                        const notaObj = {};
+                        headers.forEach((header, index) => {
+                            notaObj[header.trim()] = values[index]?.trim() || '';
+                        });
+                        notasConsolidadas.push(mapearTxtParaPadronizado(notaObj));
+                    }
+                }
+
+            } else {
+                // Processamento de XML
+                const parser = new DOMParser();
+                let formatoPrimeiroArquivo = null;
+
+                for (let i = 0; i < fileContents.length; i++) {
+                    const xmlString = fileContents[i];
+                    const xmlDoc = parser.parseFromString(xmlString, "application/xml");
+                    
+                    if (xmlDoc.getElementsByTagName("parsererror").length) {
+                        log(`Erro de sintaxe no arquivo "${arquivosSelecionados[i].name}". Ignorado.`, 'error');
+                        continue;
+                    }
+
+                    let formatoOrigem, listaNotas;
+                    if (xmlDoc.querySelector("NOTA_FISCAL")) {
+                        formatoOrigem = "CG";
+                        listaNotas = xmlDoc.querySelectorAll("NOTA_FISCAL");
+                    } else if (xmlDoc.querySelector("NFe")) {
+                        formatoOrigem = "SIMPLISS"; // Simplificado, ambos usam a mesma base
+                        listaNotas = xmlDoc.querySelectorAll("NFe");
+                    } else {
+                        log(`Formato não reconhecido no arquivo "${arquivosSelecionados[i].name}". Ignorado.`, 'error');
+                        continue;
+                    }
+
+                    if (!formatoPrimeiroArquivo) formatoPrimeiroArquivo = formatoOrigem;
+                    else if (formatoPrimeiroArquivo !== formatoOrigem) {
+                        log(`ERRO: Mistura de formatos de arquivo (${formatoPrimeiroArquivo} vs ${formatoOrigem}).`, 'error');
+                        return;
+                    }
+
+                    listaNotas.forEach(notaNode => {
+                         notasConsolidadas.push(mapearXmlParaPadronizado(notaNode, formatoOrigem));
+                    });
+                }
+            }
+            
+            if (notasConsolidadas.length === 0) {
+                log("Nenhuma nota fiscal válida encontrada para processar.", 'error');
+                processarBtn.disabled = false;
+                processarBtn.textContent = 'Processar Arquivos';
+                return;
+            }
+
+            log(`Total de ${notasConsolidadas.length} notas consolidadas para processamento.`);
+            
+            const colPrestados = [], colTomados = [], colCancelados = [];
+            
+            notasConsolidadas.forEach(nota => {
+                if (nota.prestadorCnpj === cnpjCliente) {
+                    if (nota.situacao === "CANCELADA" || nota.situacao === "SUBSTITUIDA") {
+                        colCancelados.push(nota);
+                    } else {
+                        colPrestados.push(nota);
+                    }
+                } else if (nota.tomadorDoc === cnpjCliente) {
+                    colTomados.push(nota);
+                }
+            });
+
+            log(`Resumo: ${colPrestados.length} prestados, ${colTomados.length} tomados, ${colCancelados.length} cancelados.`);
+            log('Gerando arquivos XML e PDF...');
+            
+            const xmlHeader = '<?xml version="1.0" encoding="UTF-8"?>';
+            
+            if (modoGeracaoEscolhido === 'LOTE') {
+                if (colPrestados.length > 0) {
+                    const lote = colPrestados.map(n => gerarXML_CompNfse(n)).join('\n');
+                    const xmlFinal = `${xmlHeader}<LoteNfse xmlns="http://www.abrasf.org.br/nfse.xsd">${lote}</LoteNfse>`;
+                    triggerDownload(new Blob([xmlFinal], { type: 'application/xml' }), 'ServicosPrestados_Lote.xml');
+                }
+                if (colTomados.length > 0) {
+                    const lote = colTomados.map(n => gerarXML_CompNfse(n)).join('\n');
+                    const xmlFinal = `${xmlHeader}<LoteNfse xmlns="http://www.abrasf.org.br/nfse.xsd">${lote}</LoteNfse>`;
+                    triggerDownload(new Blob([xmlFinal], { type: 'application/xml' }), 'ServicosTomados_Lote.xml');
+                }
+                if (colCancelados.length > 0) {
+                    const lote = colCancelados.map(n => gerarXML_PedidoCancelamento(n)).join('\n');
+                    const xmlFinal = `${xmlHeader}<CancelarNfseEnvio xmlns="http://www.abrasf.org.br/nfse.xsd">${lote}</CancelarNfseEnvio>`;
+                    triggerDownload(new Blob([xmlFinal], { type: 'application/xml' }), 'ServicosPrestadosCancelados_Lote.xml');
+                }
+            } else { // INDIVIDUAL
+                const zipPrestados = new JSZip();
+                const zipTomados = new JSZip();
+                const zipCancelados = new JSZip();
+
+                colPrestados.forEach(n => zipPrestados.file(`Prestada_${n.numero}.xml`, gerarXML_CompNfse(n)));
+                colTomados.forEach(n => zipTomados.file(`Tomada_${n.numero}.xml`, gerarXML_CompNfse(n)));
+                colCancelados.forEach(n => {
+                    const xml = gerarXML_PedidoCancelamento(n);
+                    const xmlFinal = `${xmlHeader}<CancelarNfseEnvio xmlns="http://www.abrasf.org.br/nfse.xsd">${xml}</CancelarNfseEnvio>`;
+                    zipCancelados.file(`Cancelada_${n.numero}.xml`, xmlFinal);
+                });
+
+                if (colPrestados.length > 0) zipPrestados.generateAsync({type:"blob"}).then(blob => triggerDownload(blob, "ServicosPrestados_Individuais.zip"));
+                if (colTomados.length > 0) zipTomados.generateAsync({type:"blob"}).then(blob => triggerDownload(blob, "ServicosTomados_Individuais.zip"));
+                if (colCancelados.length > 0) zipCancelados.generateAsync({type:"blob"}).then(blob => triggerDownload(blob, "ServicosPrestadosCancelados_Individuais.zip"));
+            }
+
+            // Gerar PDFs
+            gerarRelatorioPDF(colPrestados, "Relatório de Serviços Prestados", "Relatorio_Servicos_Prestados.pdf", false);
+            gerarRelatorioPDF(colTomados, "Relatório de Serviços Tomados", "Relatorio_Servicos_Tomados.pdf", false);
+            gerarRelatorioPDF(colCancelados, "Relatório de Notas Canceladas", "Relatorio_Notas_Canceladas.pdf", true);
 
             log('Processamento concluído com sucesso!', 'success');
             processarBtn.disabled = false;
@@ -1176,8 +1073,7 @@
             arquivosSelecionados = Array.from(files).filter(file => file.name.endsWith(fileType));
             
             if(arquivosSelecionados.length !== files.length) {
-                // MODIFICAÇÃO: Troca alert por log
-                log(`Alguns arquivos não eram do tipo ${fileType} e foram ignorados.`, 'error');
+                alert(`Alguns arquivos não eram do tipo ${fileType} e foram ignorados.`);
             }
             atualizarListaArquivos();
         }
