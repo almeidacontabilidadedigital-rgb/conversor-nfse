@@ -144,6 +144,8 @@
         let arquivosSelecionados = [];
         let activeTab = 'xml';
         let codigosIBGE = {};
+        // MODIFICAÇÃO: Mapa otimizado para busca normalizada
+        let codigosIBGENormalizados = {};
 
         // --- Referências aos Elementos do DOM ---
         const cnpjInput = document.getElementById('cnpjCliente');
@@ -178,6 +180,73 @@
             logMessagesDiv.scrollTop = logMessagesDiv.scrollHeight;
         }
         
+        // --- Funções Utilitárias ---
+
+        /** Normalização leve para exibição (remove acentos, parênteses, etc.) */
+        function normalizeCidadeNome(text) {
+            if (!text) return "";
+            return text
+                .normalize("NFD") // Separa os acentos das letras
+                .replace(/[\u0300-\u036f]/g, "") // Remove os acentos
+                .replace(/'/g, "") // Remove apóstrofos (ex: D'AGUA vira DAGUA)
+                .replace(/\(.*?\)/g, "") // Remove qualquer texto entre parênteses
+                .toUpperCase() // Converte para maiúsculas
+                .trim(); // Remove espaços no início e no fim
+        }
+
+        /** MODIFICAÇÃO: Normalização agressiva para chaves de busca (remove acentos, espaços, preposições, etc.) */
+        function normalizeStringParaChave(text) {
+            if (!text) return "";
+            return text
+                .normalize("NFD") // Separa os acentos das letras
+                .replace(/[\u0300-\u036f]/g, "") // Remove os acentos
+                .toUpperCase() // Converte para maiúsculas
+                .replace(/\(.*\)/g, "") // Remove qualquer texto entre parênteses
+                .replace(/'/g, "") // Remove apóstrofos (ex: D'OESTE -> DOESTE)
+                .replace(/[-.]/g, "") // Remove hífens e pontos
+                // Remove preposições comuns que causam falhas (D', DE, DO, DA, DAS, DOS)
+                .replace(/\b(D|DA|DE|DO|DAS|DOS)\b/g, '')
+                .replace(/\s+/g, ""); // Remove TODOS os espaços
+        }
+
+        // +++ INÍCIO DA NOVA FUNÇÃO (Levenshtein) +++
+        /**
+         * Calcula a distância Levenshtein entre duas strings (custo de edição).
+         * @param {string} s1 String 1
+         * @param {string} s2 String 2
+         * @returns {number} A distância de edição
+         */
+        function levenshtein(s1, s2) {
+            if (!s1) return s2 ? s2.length : 0;
+            if (!s2) return s1.length;
+
+            const m = s1.length;
+            const n = s2.length;
+            let v0 = new Array(n + 1);
+            let v1 = new Array(n + 1);
+
+            for (let i = 0; i <= n; i++) {
+                v0[i] = i;
+            }
+
+            for (let i = 0; i < m; i++) {
+                v1[0] = i + 1;
+                for (let j = 0; j < n; j++) {
+                    const cost = (s1[i] === s2[j]) ? 0 : 1;
+                    v1[j + 1] = Math.min(
+                        v1[j] + 1,      // Deletion
+                        v0[j + 1] + 1,  // Insertion
+                        v0[j] + cost    // Substitution
+                    );
+                }
+                let temp = v0;
+                v0 = v1;
+                v1 = temp;
+            }
+            return v0[n];
+        }
+        // +++ FIM DA NOVA FUNÇÃO (Levenshtein) +++
+        
         // --- Carregamento Assíncrono de Dados ---
         async function carregarDadosMunicipios() {
             try {
@@ -187,6 +256,27 @@
                 }
                 codigosIBGE = await response.json();
                 console.log('Dados dos municípios carregados com sucesso.');
+
+                // --- INÍCIO DA MODIFICAÇÃO ---
+                // Cria o mapa de busca normalizado para lidar com divergências de nomes
+                log('Criando índice de busca normalizado para municípios...');
+                codigosIBGENormalizados = {};
+                for (const chaveOriginal in codigosIBGE) {
+                    if (Object.hasOwnProperty.call(codigosIBGE, chaveOriginal)) {
+                        const [cidade, uf] = chaveOriginal.split('|');
+                        if (!cidade || !uf) continue; // Pula chaves inválidas
+                        
+                        // A chave normalizada remove espaços, preposições, acentos, etc.
+                        const chaveNormalizada = normalizeStringParaChave(cidade) + '|' + uf.toUpperCase();
+                        
+                        if (!codigosIBGENormalizados[chaveNormalizada]) {
+                             codigosIBGENormalizados[chaveNormalizada] = codigosIBGE[chaveOriginal];
+                        }
+                    }
+                }
+                log('Índice de busca criado.');
+                // --- FIM DA MODIFICAÇÃO ---
+
             } catch (error) {
                 console.error('Falha ao carregar o arquivo municipios.json:', error);
                 log('Erro crítico: Não foi possível carregar os dados dos municípios. A conversão pode falhar.', 'error');
@@ -334,25 +424,71 @@
             });
         }
         
-        function normalizeString(text) {
-            if (!text) return "";
-            return text
-                .normalize("NFD") // Separa os acentos das letras
-                .replace(/[\u0300-\u036f]/g, "") // Remove os acentos
-                .replace(/'/g, "") // Remove apóstrofos (ex: D'AGUA vira DAGUA)
-                .replace(/\(.*?\)/g, "") // Remove qualquer texto entre parênteses
-                .toUpperCase() // Converte para maiúsculas
-                .trim(); // Remove espaços no início e no fim
-        }
-        
+        // MODIFICAÇÃO: Função de busca de IBGE atualizada
         function findIBGECode(cidade, uf) {
             if (!cidade || !uf) return "";
-            const chave = `${normalizeString(cidade)}|${uf.toUpperCase()}`;
-            const code = codigosIBGE[chave];
-            if (!code) {
-                log(`Código IBGE não encontrado para ${cidade}-${uf} na lista local.`, 'error');
+            
+            // --- INÍCIO DA MODIFICAÇÃO ---
+            
+            const ufUpper = uf.toUpperCase();
+            const cidadeNormalizadaChave = normalizeStringParaChave(cidade);
+            
+            // 1. Tenta a busca normalizada (mais robusta e rápida)
+            const chaveBuscaRapida = `${cidadeNormalizadaChave}|${ufUpper}`;
+            let code = codigosIBGENormalizados[chaveBuscaRapida];
+
+            if (code) {
+                return code; // Encontrado na busca rápida
             }
-            return code || "";
+
+            // 2. Fallback: Tenta a busca "original" (menos robusta)
+            const chaveOriginal = `${normalizeCidadeNome(cidade)}|${ufUpper}`;
+            code = codigosIBGE[chaveOriginal];
+            
+            if (code) {
+                return code; // Encontrado na busca original
+            }
+
+            // 3. Fallback: Tenta a busca por semelhança (Levenshtein) - LENTA
+            log(`Código não encontrado para ${normalizeCidadeNome(cidade)}-${ufUpper}. Tentando busca por semelhança...`, 'info');
+
+            let melhorDistancia = Infinity;
+            let melhorCodigo = "";
+            const LIMITE_DISTANCIA = 1; // Aceita apenas 1 erro (typo)
+
+            for (const chaveJson in codigosIBGE) {
+                const [nomeJson, ufJson] = chaveJson.split('|');
+                
+                // Só compara se a UF for a mesma
+                if (ufJson === ufUpper) {
+                    const nomeJsonNormalizado = normalizeStringParaChave(nomeJson);
+                    const distancia = levenshtein(cidadeNormalizadaChave, nomeJsonNormalizado);
+
+                    if (distancia < melhorDistancia) {
+                        melhorDistancia = distancia;
+                        melhorCodigo = codigosIBGE[chaveJson];
+                    }
+                    
+                    // Se a distância for 0 (caso que a normalização do passo 1 falhou por algum motivo)
+                    if (distancia === 0) {
+                         melhorDistancia = 0;
+                         melhorCodigo = codigosIBGE[chaveJson];
+                         break; // Encontrou correspondência exata normalizada
+                    }
+                }
+            }
+
+            // Verifica se a melhor correspondência encontrada está dentro do limite aceitável
+            if (melhorDistancia <= LIMITE_DISTANCIA) {
+                 log(`Correspondência por semelhança encontrada para ${normalizeCidadeNome(cidade)}-${ufUpper} (Distância: ${melhorDistancia}).`, 'success');
+                 return melhorCodigo;
+            }
+            
+            // 4. Log de erro final
+            log(`Código IBGE não encontrado para ${normalizeCidadeNome(cidade)}-${ufUpper} na lista local. [Busca por semelhança falhou]`, 'error');
+            
+            return ""; // Não encontrou
+            // --- FIM DA MODIFICAÇÃO ---
         }
 
         function getNodeText(parentNode, selector, defaultValue = "") {
@@ -465,7 +601,8 @@
                 valorCSLL: safeParseFloat(getNodeText(noNota, formato === 'CG' ? "VALOR_CSLL" : "ValorCSLL")),
                 issRetido: (formato === 'CG' ? (issRetidoCG > 0 ? "1" : "2") : (getNodeText(noNota, "ISSRetido", "0") === "1" ? "1" : "2")),
                 valorIssRetido: issRetidoCG > 0 ? issRetidoCG : (getNodeText(noNota, "ISSRetido", "0") === "1" ? safeParseFloat(getNodeText(noNota, "ValorISS")) : 0),
-                exigibilidadeISS: (formato === 'CG' ? (normalizeString(prestacaoCidade) === normalizeString(prestadorCidade) || prestacaoCidade === "" ? "1" : "2") : "1"),
+                // MODIFICAÇÃO: Renomeada a função de normalização
+                exigibilidadeISS: (formato === 'CG' ? (normalizeCidadeNome(prestacaoCidade) === normalizeCidadeNome(prestadorCidade) || prestacaoCidade === "" ? "1" : "2") : "1"),
                 itemLista: mapaServicos[codServicoOriginal] || codServicoOriginal,
                 codCnae: getNodeText(noNota, formato === 'CG' ? "CODIGO_ATIVIDADE" : "Prestador > CodigoCnaePrincipal"),
                 codMunPrestacao: findIBGECode(prestacaoCidade, prestacaoUf),
