@@ -48,7 +48,6 @@
             background-color: #eff6ff;
         }
     </style>
-<link rel="stylesheet" href="/index.css">
 </head>
 <body class="bg-gray-100 font-sans">
 
@@ -375,7 +374,7 @@
             "08483": "19.01", "8487": "19.01", "08488": "19.01", "08494": "6.01", "08516": "6.02", "08532": "6.03", "08567": "6.05",
             "08575": "6.01", "08658": "6.06", "08659": "6.06", "08648": "5.08", "08656": "5.08", "08664": "34.01", "08672": "34.01",
             "08770": "37.01", "08842": "37.01", "08850": "37.01", "08885": "39.01", "08893": "40.01", "08899": "34.01",
-            "1701": "1.04" // Mapeamento adicionado para o Cód Serviço 1701
+            "1701": "17.01"
         };
         
         /** Troca a aba ativa (XML/TXT). */
@@ -1181,11 +1180,34 @@
                     triggerDownload(new Blob([xmlFinal], { type: 'application/xml' }), 'ServicosPrestadosCancelados_Lote.xml');
                 }
             } else { // INDIVIDUAL
-                const zipPrestados = new JSZip();
                 const zipTomados = new JSZip();
                 const zipCancelados = new JSZip();
 
-                colPrestados.forEach(n => zipPrestados.file(`Prestada_${n.numero}.xml`, gerarXML_CompNfse(n)));
+                // Agrupa notas prestadas por local de prestação
+                const prestadosPorLocal = colPrestados.reduce((acc, nota) => {
+                    const local = nota.prestacaoLocal || 'Local_Nao_Informado';
+                    if (!acc[local]) {
+                        acc[local] = [];
+                    }
+                    acc[local].push(nota);
+                    return acc;
+                }, {});
+                
+                // Gera um ZIP para cada local de prestação
+                for (const local in prestadosPorLocal) {
+                    const notasDoLocal = prestadosPorLocal[local];
+                    const zip = new JSZip();
+                    notasDoLocal.forEach(n => zip.file(`Prestada_${n.numero}.xml`, gerarXML_CompNfse(n)));
+                    
+                    // Sanitiza o nome do local para usar no nome do arquivo
+                    const nomeArquivoLocal = local.replace(/[\s,.-]+/g, '_').replace(/_{2,}/g, '_').replace(/_$/, '');
+                    
+                    zip.generateAsync({ type: "blob" }).then(blob => {
+                        triggerDownload(blob, `ServicosPrestados_Individuais_${nomeArquivoLocal}.zip`);
+                    });
+                }
+
+                // Lógica para tomados e cancelados permanece a mesma
                 colTomados.forEach(n => zipTomados.file(`Tomada_${n.numero}.xml`, gerarXML_CompNfse(n)));
                 colCancelados.forEach(n => {
                     const xml = gerarXML_PedidoCancelamento(n);
@@ -1193,7 +1215,6 @@
                     zipCancelados.file(`Cancelada_${n.numero}.xml`, xmlFinal);
                 });
 
-                if (colPrestados.length > 0) zipPrestados.generateAsync({type:"blob"}).then(blob => triggerDownload(blob, "ServicosPrestados_Individuais.zip"));
                 if (colTomados.length > 0) zipTomados.generateAsync({type:"blob"}).then(blob => triggerDownload(blob, "ServicosTomados_Individuais.zip"));
                 if (colCancelados.length > 0) zipCancelados.generateAsync({type:"blob"}).then(blob => triggerDownload(blob, "ServicosPrestadosCancelados_Individuais.zip"));
             }
@@ -1310,6 +1331,5 @@
         atualizarEstadoBotao();
     });    
     </script>
-<script type="module" src="/index.tsx"></script>
 </body>
 </html>
