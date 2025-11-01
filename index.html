@@ -181,6 +181,17 @@
         }
         
         // --- Funções Utilitárias ---
+        
+        function readFileAsText(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                    resolve(event.target.result);
+                };
+                reader.onerror = (error) => reject(error);
+                reader.readAsText(file, 'ISO-8859-1');
+            });
+        }
 
         /** Normalização leve para exibição (remove acentos, parênteses, etc.) */
         function normalizeCidadeNome(text) {
@@ -246,6 +257,85 @@
             return v0[n];
         }
         // +++ FIM DA NOVA FUNÇÃO (Levenshtein) +++
+
+        // +++ INÍCIO DE NOVAS FUNÇÕES (Relatório PDF) +++
+
+        /**
+         * Extrai o mês de referência mais comum de uma coleção de notas.
+         * @param {Array} colNotas - A coleção de notas.
+         * @returns {string} O mês/ano de referência (ex: "10/2024").
+         */
+        function getMesReferencia(colNotas) {
+            if (!colNotas || colNotas.length === 0) return 'N/A';
+
+            const contagemMeses = {};
+            let mesAnoMaisComum = 'N/A';
+            let maxContagem = 0;
+
+            colNotas.forEach(nota => {
+                const comp = nota.competencia || nota.dataEmissao; // Usa competência, senão data de emissão
+                let mesAno = 'N/A';
+
+                if (comp) {
+                    // Tenta formato YYYY-MM-DD...
+                    if (comp.includes('-')) {
+                        const parts = comp.split('T')[0].split('-');
+                        if (parts.length === 3) {
+                            mesAno = `${parts[1]}/${parts[0]}`;
+                        }
+                    // Tenta formato DD/MM/YYYY...
+                    } else if (comp.includes('/')) {
+                        const parts = comp.split(' ')[0].split('/');
+                        if (parts.length === 3) {
+                            mesAno = `${parts[1]}/${parts[2]}`;
+                        }
+                    }
+                }
+                
+                contagemMeses[mesAno] = (contagemMeses[mesAno] || 0) + 1;
+                if (contagemMeses[mesAno] > maxContagem) {
+                    maxContagem = contagemMeses[mesAno];
+                    mesAnoMaisComum = mesAno;
+                }
+            });
+
+            return mesAnoMaisComum;
+        }
+
+        /**
+         * Agrega e ranqueia clientes pelo valor total de serviço.
+         * @param {Array} colNotas - A coleção de notas de serviços prestados.
+         * @returns {Array} Um array de clientes ordenado por valor.
+         */
+        function gerarRankingClientes(colNotas) {
+            const clienteMap = new Map();
+
+            colNotas.forEach(nota => {
+                const doc = nota.tomadorDoc || 'NAO_INFORMADO';
+                const razao = nota.tomadorRazao || 'NAO_INFORMADO';
+
+                if (!clienteMap.has(doc)) {
+                    clienteMap.set(doc, {
+                        razao: razao,
+                        doc: doc,
+                        totalConsumido: 0,
+                        servicos: new Set()
+                    });
+                }
+
+                const cliente = clienteMap.get(doc);
+                cliente.totalConsumido += nota.valorServico;
+                cliente.servicos.add(nota.itemLista); // Agrega os códigos de serviço
+            });
+
+            const ranking = Array.from(clienteMap.values());
+            // Ordena do maior para o menor
+            ranking.sort((a, b) => b.totalConsumido - a.totalConsumido);
+
+            return ranking;
+        }
+
+        // +++ FIM DAS NOVAS FUNÇÕES (Relatório PDF) +++
         
         // --- Carregamento Assíncrono de Dados ---
         async function carregarDadosMunicipios() {
@@ -424,14 +514,38 @@
             });
         }
         
+        function normalizeString(text) {
+            if (!text) return "";
+            return text
+                .normalize("NFD") // Separa os acentos das letras
+                .replace(/[\u0300-\u036f]/g, "") // Remove os acentos
+                .replace(/'/g, "") // Remove apóstrofos (ex: D'AGUA vira DAGUA)
+                .replace(/\(.*?\)/g, "") // Remove qualquer texto entre parênteses
+                .toUpperCase() // Converte para maiúsculas
+                .trim(); // Remove espaços no início e no fim
+        }
+        
         // MODIFICAÇÃO: Função de busca de IBGE atualizada
         function findIBGECode(cidade, uf) {
             if (!cidade || !uf) return "";
             
-            // --- INÍCIO DA MODIFICAÇÃO ---
+            // --- INÍCIO DA MODIFICAÇÃO (Remoção de Sufixo) ---
             
             const ufUpper = uf.toUpperCase();
-            const cidadeNormalizadaChave = normalizeStringParaChave(cidade);
+            let cidadeLimpa = cidade.trim(); // Remove espaços das pontas
+            
+            // Remove o sufixo "-UF" da string da cidade, se existir
+            // Ex: "POXOREO-MT" -> "POXOREO"
+            const sufixoUf = `-${ufUpper}`;
+            if (cidadeLimpa.toUpperCase().endsWith(sufixoUf)) {
+                // Remove o sufixo. Ex: "POXOREO-MT" (length 10), sufixo "-MT" (length 3)
+                // Queremos "POXOREO" (length 7)
+                cidadeLimpa = cidadeLimpa.substring(0, cidadeLimpa.length - sufixoUf.length).trim();
+            }
+            // --- FIM DA MODIFICAÇÃO (Remoção de Sufixo) ---
+
+            // Agora, todas as buscas usarão 'cidadeLimpa'
+            const cidadeNormalizadaChave = normalizeStringParaChave(cidadeLimpa);
             
             // 1. Tenta a busca normalizada (mais robusta e rápida)
             const chaveBuscaRapida = `${cidadeNormalizadaChave}|${ufUpper}`;
@@ -442,7 +556,7 @@
             }
 
             // 2. Fallback: Tenta a busca "original" (menos robusta)
-            const chaveOriginal = `${normalizeCidadeNome(cidade)}|${ufUpper}`;
+            const chaveOriginal = `${normalizeCidadeNome(cidadeLimpa)}|${ufUpper}`;
             code = codigosIBGE[chaveOriginal];
             
             if (code) {
@@ -450,7 +564,7 @@
             }
 
             // 3. Fallback: Tenta a busca por semelhança (Levenshtein) - LENTA
-            log(`Código não encontrado para ${normalizeCidadeNome(cidade)}-${ufUpper}. Tentando busca por semelhança...`, 'info');
+            log(`Código não encontrado para ${normalizeCidadeNome(cidadeLimpa)}-${ufUpper}. Tentando busca por semelhança...`, 'info');
 
             let melhorDistancia = Infinity;
             let melhorCodigo = "";
@@ -480,15 +594,14 @@
 
             // Verifica se a melhor correspondência encontrada está dentro do limite aceitável
             if (melhorDistancia <= LIMITE_DISTANCIA) {
-                 log(`Correspondência por semelhança encontrada para ${normalizeCidadeNome(cidade)}-${ufUpper} (Distância: ${melhorDistancia}).`, 'success');
+                 log(`Correspondência por semelhança encontrada para ${normalizeCidadeNome(cidadeLimpa)}-${ufUpper} (Distância: ${melhorDistancia}).`, 'success');
                  return melhorCodigo;
             }
             
             // 4. Log de erro final
-            log(`Código IBGE não encontrado para ${normalizeCidadeNome(cidade)}-${ufUpper} na lista local. [Busca por semelhança falhou]`, 'error');
+            log(`Código IBGE não encontrado para ${normalizeCidadeNome(cidadeLimpa)}-${ufUpper} na lista local. [Busca por semelhança falhou]`, 'error');
             
             return ""; // Não encontrou
-            // --- FIM DA MODIFICAÇÃO ---
         }
 
         function getNodeText(parentNode, selector, defaultValue = "") {
@@ -601,8 +714,7 @@
                 valorCSLL: safeParseFloat(getNodeText(noNota, formato === 'CG' ? "VALOR_CSLL" : "ValorCSLL")),
                 issRetido: (formato === 'CG' ? (issRetidoCG > 0 ? "1" : "2") : (getNodeText(noNota, "ISSRetido", "0") === "1" ? "1" : "2")),
                 valorIssRetido: issRetidoCG > 0 ? issRetidoCG : (getNodeText(noNota, "ISSRetido", "0") === "1" ? safeParseFloat(getNodeText(noNota, "ValorISS")) : 0),
-                // MODIFICAÇÃO: Renomeada a função de normalização
-                exigibilidadeISS: (formato === 'CG' ? (normalizeCidadeNome(prestacaoCidade) === normalizeCidadeNome(prestadorCidade) || prestacaoCidade === "" ? "1" : "2") : "1"),
+                exigibilidadeISS: (formato === 'CG' ? (normalizeString(prestacaoCidade) === normalizeString(prestadorCidade) || prestacaoCidade === "" ? "1" : "2") : "1"),
                 itemLista: mapaServicos[codServicoOriginal] || codServicoOriginal,
                 codCnae: getNodeText(noNota, formato === 'CG' ? "CODIGO_ATIVIDADE" : "Prestador > CodigoCnaePrincipal"),
                 codMunPrestacao: findIBGECode(prestacaoCidade, prestacaoUf),
@@ -854,11 +966,45 @@
 </Pedido>`;
         }
         
-        function gerarRelatorioPDF(colNotas, tituloRelatorio, nomeArquivo, isCancelada) {
-            if (colNotas.length === 0) return;
+        // MODIFICAÇÃO: Assinatura e lógica da função de PDF alteradas
+        function gerarRelatorioPDF(colNotas, tituloRelatorio, nomeArquivo, isCancelada, headerInfo, rankingData = null) {
+            if (colNotas.length === 0 && (!rankingData || rankingData.length === 0)) {
+                log(`Nenhum dado para gerar o relatório: ${nomeArquivo}`, 'info');
+                return; // Não gera PDF se não houver notas nem ranking (para o caso de prestados)
+            }
+            if (isCancelada && colNotas.length === 0) {
+                 log(`Nenhuma nota cancelada para gerar o relatório: ${nomeArquivo}`, 'info');
+                return; // Não gera PDF de cancelados se não houver notas
+            }
+             if (!isCancelada && colNotas.length === 0 && (rankingData && rankingData.length === 0)) {
+                 log(`Nenhum dado para gerar o relatório: ${nomeArquivo}`, 'info');
+                return; // Não gera PDF de tomados se não houver notas
+            }
+
 
             const doc = new jsPDF({ orientation: 'landscape' });
-            
+            const pageMargin = 14;
+
+            /** Função para desenhar o cabeçalho em cada página */
+            const drawHeader = (data, titulo) => {
+                doc.setFontSize(16);
+                doc.setFont('helvetica', 'bold');
+                doc.text(titulo, pageMargin, 15);
+
+                doc.setFontSize(9);
+                doc.setFont('helvetica', 'normal');
+                
+                const cnpjFormatado = headerInfo.cnpjEmpresa; // Já vem formatado
+
+                doc.text(`Empresa: ${headerInfo.nomeEmpresa}`, pageMargin, 22);
+                doc.text(`CNPJ: ${cnpjFormatado}`, doc.internal.pageSize.width / 2, 22, { align: 'center' });
+                doc.text(`Mês Referência: ${headerInfo.mesReferencia}`, doc.internal.pageSize.width - pageMargin, 22, { align: 'right' });
+                
+                // Linha divisória
+                doc.setDrawColor(200);
+                doc.line(pageMargin, 25, doc.internal.pageSize.width - pageMargin, 25);
+            };
+
             if (isCancelada) {
                 const head = [['Nº NFS-e', 'Data Emissão', 'Local da Prestação', 'Data Cancelamento', 'Status']];
                 const body = colNotas.map(nota => [
@@ -871,58 +1017,98 @@
                  doc.autoTable({
                     head: head,
                     body: body,
-                    startY: 25,
+                    startY: 30, // Posição Y inicial abaixo do cabeçalho
                     theme: 'striped',
                     headStyles: { fillColor: [41, 128, 185], textColor: 255, fontStyle: 'bold' },
-                    styles: { fontSize: 8 },
-                    didDrawPage: data => doc.text(tituloRelatorio, data.settings.margin.left, 20)
+                    styles: { fontSize: 8, cellPadding: 1.5 },
+                    margin: { top: 30, left: pageMargin, right: pageMargin, bottom: 15 },
+                    didDrawPage: (data) => drawHeader(data, tituloRelatorio) // Adiciona cabeçalho
                 });
             } else {
-                const head = [['Nº NFS-e', 'Data emissão', 'Local da Prestação', 'Valor do serviço', 'Base de cálculo ISS Normal', 'Alíquota ISS', 'Valor ISS', 'Valor IR Retido', 'Valor PIS Retido', 'Valor COFINS Retido', 'Valor CSLL Retido', 'Valor INSS Retido', 'Outros Valores', 'Base de Cálculo ISS Retido', 'Valor ISS Retido', 'Valor Líquido NFS-e', 'Status', 'Cód serviço']];
-                let totais = { valServ: 0, baseNorm: 0, issNorm: 0, ir: 0, pis: 0, cofins: 0, csll: 0, inss: 0, outros: 0, baseRet: 0, issRet: 0, liq: 0 };
+                // Relatório principal (Prestados ou Tomados)
+                if (colNotas.length > 0) {
+                    const head = [['Nº NFS-e', 'Data emissão', 'Local da Prestação', 'Valor do serviço', 'Base de cálculo ISS Normal', 'Alíquota ISS', 'Valor ISS', 'Valor IR Retido', 'Valor PIS Retido', 'Valor COFINS Retido', 'Valor CSLL Retido', 'Valor INSS Retido', 'Outros Valores', 'Base de Cálculo ISS Retido', 'Valor ISS Retido', 'Valor Líquido NFS-e', 'Status', 'Cód serviço']];
+                    let totais = { valServ: 0, baseNorm: 0, issNorm: 0, ir: 0, pis: 0, cofins: 0, csll: 0, inss: 0, outros: 0, baseRet: 0, issRet: 0, liq: 0 };
 
-                const body = colNotas.map(nota => {
-                    const baseCalculoNormal = nota.issRetido === "1" ? 0 : nota.valorServico;
-                    const vlrIssNormal = nota.issRetido === "1" ? 0 : nota.valorIss;
-                    const baseCalculoRetido = nota.issRetido === "1" ? nota.valorServico : 0;
+                    const body = colNotas.map(nota => {
+                        const baseCalculoNormal = nota.issRetido === "1" ? 0 : nota.valorServico;
+                        const vlrIssNormal = nota.issRetido === "1" ? 0 : nota.valorIss;
+                        const baseCalculoRetido = nota.issRetido === "1" ? nota.valorServico : 0;
+                        
+                        totais.valServ += nota.valorServico;
+                        totais.baseNorm += baseCalculoNormal;
+                        totais.issNorm += vlrIssNormal;
+                        totais.ir += nota.valorIR;
+                        totais.pis += nota.valorPIS;
+                        totais.cofins += nota.valorCOFINS;
+                        totais.csll += nota.valorCSLL;
+                        totais.inss += nota.valorINSS;
+                        totais.outros += nota.valorDeducao;
+                        totais.baseRet += baseCalculoRetido;
+                        totais.issRet += nota.valorIssRetido;
+                        totais.liq += nota.valorLiquido;
+
+                        return [
+                            nota.numero, (nota.dataEmissao || '').split(' ')[0], nota.prestacaoLocal, formatCurrency(nota.valorServico),
+                            formatCurrency(baseCalculoNormal), `${(nota.aliquota || 0).toFixed(2)}%`, formatCurrency(vlrIssNormal),
+                            formatCurrency(nota.valorIR), formatCurrency(nota.valorPIS), formatCurrency(nota.valorCOFINS), formatCurrency(nota.valorCSLL), formatCurrency(nota.valorINSS),
+                            formatCurrency(nota.valorDeducao), formatCurrency(baseCalculoRetido), formatCurrency(nota.valorIssRetido),
+                            formatCurrency(nota.valorLiquido), 'Autorizada', nota.itemLista
+                        ];
+                    });
                     
-                    totais.valServ += nota.valorServico;
-                    totais.baseNorm += baseCalculoNormal;
-                    totais.issNorm += vlrIssNormal;
-                    totais.ir += nota.valorIR;
-                    totais.pis += nota.valorPIS;
-                    totais.cofins += nota.valorCOFINS;
-                    totais.csll += nota.valorCSLL;
-                    totais.inss += nota.valorINSS;
-                    totais.outros += nota.valorDeducao;
-                    totais.baseRet += baseCalculoRetido;
-                    totais.issRet += nota.valorIssRetido;
-                    totais.liq += nota.valorLiquido;
+                    const foot = [[
+                        { content: 'TOTAIS', colSpan: 3, styles: { halign: 'right', fontStyle: 'bold' } },
+                        formatCurrency(totais.valServ), formatCurrency(totais.baseNorm), '', formatCurrency(totais.issNorm),
+                        formatCurrency(totais.ir), formatCurrency(totais.pis), formatCurrency(totais.cofins), formatCurrency(totais.csll), formatCurrency(totais.inss),
+                        formatCurrency(totais.outros), formatCurrency(totais.baseRet), formatCurrency(totais.issRet),
+                        formatCurrency(totais.liq), '', ''
+                    ]];
 
-                    return [
-                        nota.numero, (nota.dataEmissao || '').split(' ')[0], nota.prestacaoLocal, formatCurrency(nota.valorServico),
-                        formatCurrency(baseCalculoNormal), `${(nota.aliquota || 0).toFixed(2)}%`, formatCurrency(vlrIssNormal),
-                        formatCurrency(nota.valorIR), formatCurrency(nota.valorPIS), formatCurrency(nota.valorCOFINS), formatCurrency(nota.valorCSLL), formatCurrency(nota.valorINSS),
-                        formatCurrency(nota.valorDeducao), formatCurrency(baseCalculoRetido), formatCurrency(nota.valorIssRetido),
-                        formatCurrency(nota.valorLiquido), 'Autorizada', nota.itemLista
-                    ];
-                });
-                
-                const foot = [[
-                    { content: 'TOTAIS', colSpan: 3, styles: { halign: 'right', fontStyle: 'bold' } },
-                    formatCurrency(totais.valServ), formatCurrency(totais.baseNorm), '', formatCurrency(totais.issNorm),
-                    formatCurrency(totais.ir), formatCurrency(totais.pis), formatCurrency(totais.cofins), formatCurrency(totais.csll), formatCurrency(totais.inss),
-                    formatCurrency(totais.outros), formatCurrency(totais.baseRet), formatCurrency(totais.issRet),
-                    formatCurrency(totais.liq), '', ''
-                ]];
+                    doc.autoTable({
+                        head: head, 
+                        body: body, 
+                        foot: foot, 
+                        startY: 30, // Posição Y inicial abaixo do cabeçalho
+                        theme: 'striped',
+                        headStyles: { fillColor: [41, 128, 185], textColor: 255, fontStyle: 'bold' },
+                        footStyles: { fillColor: [232, 232, 232], textColor: 0, fontStyle: 'bold' },
+                        styles: { fontSize: 7, cellPadding: 1.2 }, // Fonte levemente maior
+                        margin: { top: 30, left: pageMargin, right: pageMargin, bottom: 15 },
+                        didDrawPage: (data) => drawHeader(data, tituloRelatorio) // Adiciona cabeçalho
+                    });
+                }
 
-                doc.autoTable({
-                    head: head, body: body, foot: foot, startY: 25, theme: 'striped',
-                    headStyles: { fillColor: [41, 128, 185], textColor: 255, fontStyle: 'bold' },
-                    footStyles: { fillColor: [232, 232, 232], textColor: 0, fontStyle: 'bold' },
-                    styles: { fontSize: 6.5, cellPadding: 1.5 },
-                    didDrawPage: data => doc.text(tituloRelatorio, data.settings.margin.left, 20)
-                });
+                // --- INÍCIO DA MODIFICAÇÃO: Adiciona página de Ranking ---
+                if (rankingData && rankingData.length > 0) {
+                    // Adiciona nova página apenas se já houver uma página anterior (lista de notas)
+                    if (colNotas.length > 0) {
+                        doc.addPage();
+                    }
+                    
+                    drawHeader(null, "Ranking de Clientes"); // Desenha o cabeçalho manualmente
+
+                    const rankingHead = [['#', 'Cliente (Razão Social)', 'Documento (CNPJ/CPF)', 'Valor Total Consumido', 'Serviços Prestados (Códigos)']];
+                    const rankingBody = rankingData.map((cliente, index) => [
+                        index + 1,
+                        cliente.razao,
+                        cliente.doc,
+                        formatCurrency(cliente.totalConsumido),
+                        Array.from(cliente.servicos).join(', ') // Lista os códigos de serviço
+                    ]);
+
+                    doc.autoTable({
+                        head: rankingHead,
+                        body: rankingBody,
+                        startY: 30,
+                        theme: 'striped',
+                        headStyles: { fillColor: [22, 163, 74], textColor: 255, fontStyle: 'bold' }, // Cor verde
+                        styles: { fontSize: 8, cellPadding: 1.5 },
+                        margin: { top: 30, left: pageMargin, right: pageMargin, bottom: 15 },
+                        // didDrawPage não é necessário aqui, pois o cabeçalho foi desenhado manualmente
+                    });
+                }
+                // --- FIM DA MODIFICAÇÃO ---
             }
             
             triggerDownload(doc.output('blob'), nomeArquivo);
@@ -938,7 +1124,7 @@
             downloadLinksDiv.innerHTML = '';
             
             log('Iniciando processamento...');
-            const cnpjCliente = cnpjInput.value;
+            const cnpjCliente = cnpjInput.value.replace(/\D/g, ''); // Apenas números
 
             const fileContents = await Promise.all(
                 arquivosSelecionados.map(file => readFileAsText(file))
@@ -1077,9 +1263,32 @@
             }
 
             // Gerar PDFs
-            gerarRelatorioPDF(colPrestados, "Relatório de Serviços Prestados", "Relatorio_Servicos_Prestados.pdf", false);
-            gerarRelatorioPDF(colTomados, "Relatório de Serviços Tomados", "Relatorio_Servicos_Tomados.pdf", false);
-            gerarRelatorioPDF(colCancelados, "Relatório de Notas Canceladas", "Relatorio_Notas_Canceladas.pdf", true);
+            // MODIFICAÇÃO: Coleta dados e passa para a função de gerar PDF
+            const cnpjClienteFormatado = cnpjCliente.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5');
+            
+            // Tenta obter o nome da empresa a partir dos dados processados
+            let nomeEmpresa = 'Empresa (Não identificado)';
+            if (colPrestados.length > 0) {
+                nomeEmpresa = colPrestados[0].prestadorRazao;
+            } else if (colTomados.length > 0) {
+                // Se não prestou, pega o nome de tomador (assumindo que é a mesma empresa)
+                const primeiroTomador = colTomados.find(n => n.tomadorDoc === cnpjCliente);
+                if (primeiroTomador) nomeEmpresa = primeiroTomador.tomadorRazao;
+            } else if (colCancelados.length > 0) {
+                nomeEmpresa = colCancelados[0].prestadorRazao;
+            }
+
+            // Gera os dados de cabeçalho para cada relatório
+            const headerInfoPrestados = { nomeEmpresa, cnpjEmpresa: cnpjClienteFormatado, mesReferencia: getMesReferencia(colPrestados.length > 0 ? colPrestados : colCancelados) }; // Usa notas canceladas se não houver prestadas
+            const headerInfoTomados = { nomeEmpresa, cnpjEmpresa: cnpjClienteFormatado, mesReferencia: getMesReferencia(colTomados) };
+            const headerInfoCancelados = { nomeEmpresa, cnpjEmpresa: cnpjClienteFormatado, mesReferencia: getMesReferencia(colCancelados) };
+
+            // Gera o ranking APENAS para serviços prestados
+            const ranking = gerarRankingClientes(colPrestados);
+
+            gerarRelatorioPDF(colPrestados, "Relatório de Serviços Prestados", "Relatorio_Servicos_Prestados.pdf", false, headerInfoPrestados, ranking);
+            gerarRelatorioPDF(colTomados, "Relatório de Serviços Tomados", "Relatorio_Servicos_Tomados.pdf", false, headerInfoTomados, null);
+            gerarRelatorioPDF(colCancelados, "Relatório de Notas Canceladas", "Relatorio_Notas_Canceladas.pdf", true, headerInfoCancelados, null);
 
             log('Processamento concluído com sucesso!', 'success');
             processarBtn.disabled = false;
@@ -1121,7 +1330,8 @@
             arquivosSelecionados = Array.from(files).filter(file => file.name.endsWith(fileType));
             
             if(arquivosSelecionados.length !== files.length) {
-                alert(`Alguns arquivos não eram do tipo ${fileType} e foram ignorados.`);
+                // MODIFICAÇÃO: Troca alert por log
+                log(`Alguns arquivos não eram do tipo ${fileType} e foram ignorados.`, 'error');
             }
             atualizarListaArquivos();
         }
