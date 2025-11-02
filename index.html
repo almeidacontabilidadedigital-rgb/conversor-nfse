@@ -522,14 +522,14 @@
                              .substring(0, 60); // Limita o tamanho final
         }
 
-        function readFileAsText(file) {
+        function readFileAsText(file, encoding = 'UTF-8') {
             return new Promise((resolve, reject) => {
                 const reader = new FileReader();
                 reader.onload = (event) => {
                     resolve(event.target.result);
                 };
                 reader.onerror = (error) => reject(error);
-                reader.readAsText(file, 'UTF-8');
+                reader.readAsText(file, encoding);
             });
         }
         
@@ -754,7 +754,7 @@
              const prestadorUf = notaTxt["UF do Prestador"];
              const tomadorCidade = notaTxt["Cidade do Tomador"];
              const tomadorUf = notaTxt["UF do Tomador"];
-             const codServicoOriginal = notaTxt["Código do Serviço Prestado na Nota Fiscal"];
+             const codServicoOriginal = (notaTxt["Código do Serviço Prestado na Nota Fiscal"] || '').padStart(5, '0');
 
             let situacao = "NORMAL";
             if (notaTxt["Situação da Nota Fiscal"]?.toUpperCase() === 'C' || notaTxt["Situação da Nota Fiscal"]?.toUpperCase() === 'CANCELADA') {
@@ -1173,14 +1173,16 @@
                 return;
             }
 
+            const isTxt = activeTab === 'txt';
+            const encoding = isTxt ? 'ISO-8859-1' : 'UTF-8';
+
             const fileContents = await Promise.all(
-                arquivosSelecionados.map(file => readFileAsText(file))
+                arquivosSelecionados.map(file => readFileAsText(file, encoding))
             );
 
             log(`Carregados ${fileContents.length} arquivos na memória.`);
 
             let notasConsolidadas = [];
-            const isTxt = activeTab === 'txt';
 
             if (isTxt) {
                 for (let i = 0; i < fileContents.length; i++) {
