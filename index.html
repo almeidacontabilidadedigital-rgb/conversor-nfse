@@ -780,26 +780,51 @@
             const valorIssRetido = isIssRetido ? valorIss : 0;
             const valorLiquido = valorServico - valorIR - valorPIS - valorCOFINS - valorCSLL - valorINSS - valorIssRetido - valorDeducao;
 
-            const prestadorCodMun = findIBGECode(prestadorCidade, prestadorUf);
-            let codMunPrestacao = notaTxt["Município Prestação - cód. IBGE"];
+            // --- REVISED LOGIC FOR SERVICE LOCATION ---
+            let codMunPrestacao;
             let prestacaoLocal = '';
+            
+            // Standard Nota Paulistana fields for service location (by name)
+            const prestacaoCidadeNome = notaTxt["Município de Prestação do Serviço"];
+            const prestacaoUfNome = notaTxt["UF de Prestação do Serviço"];
+            // A possible alternative field (by code)
+            const prestacaoCodIbge = notaTxt["Município Prestação - cód. IBGE"];
 
-            if (!codMunPrestacao || codMunPrestacao === '0') {
-                codMunPrestacao = prestadorCodMun;
-            }
-
-            // Look up city/UF name from the IBGE code
-            if (codMunPrestacao && reverseCodigosIBGE[codMunPrestacao]) {
-                const { cidade, uf } = reverseCodigosIBGE[codMunPrestacao];
-                prestacaoLocal = `${cidade} - ${uf}`;
-            } else if (codMunPrestacao === prestadorCodMun) {
-                // Fallback to provider's city if codes match
-                prestacaoLocal = `${prestadorCidade} - ${prestadorUf}`;
-            } else {
-                log(`Não foi possível encontrar o nome do município para o código IBGE de prestação: ${codMunPrestacao}`, 'error');
-                prestacaoLocal = 'Local_Desconhecido';
+            // Priority 1: Use service location by name if available and valid.
+            if (prestacaoCidadeNome && prestacaoUfNome) {
+                const foundCode = findIBGECode(prestacaoCidadeNome, prestacaoUfNome);
+                if (foundCode !== '9999999') {
+                    codMunPrestacao = foundCode;
+                    prestacaoLocal = `${prestacaoCidadeNome} - ${prestacaoUfNome}`;
+                }
             }
             
+            // Priority 2: Use service location by IBGE code if available and name wasn't found.
+            if (!prestacaoLocal && prestacaoCodIbge && prestacaoCodIbge !== '0') {
+                 codMunPrestacao = prestacaoCodIbge;
+                 if (reverseCodigosIBGE[codMunPrestacao]) {
+                     const { cidade, uf } = reverseCodigosIBGE[codMunPrestacao];
+                     prestacaoLocal = `${cidade} - ${uf}`;
+                 }
+            }
+
+            // Priority 3: Fallback to provider's location.
+            if (!prestacaoLocal && prestadorCidade && prestadorUf) {
+                const foundCode = findIBGECode(prestadorCidade, prestadorUf);
+                if (foundCode !== '9999999') {
+                     codMunPrestacao = foundCode;
+                     prestacaoLocal = `${prestadorCidade} - ${prestadorUf}`;
+                }
+            }
+
+            // Final fallback if nothing was found.
+            if (!prestacaoLocal) {
+                prestacaoLocal = 'Não especificado';
+                // Best guess for code, might be provider's or default error code
+                codMunPrestacao = findIBGECode(prestadorCidade, prestadorUf);
+            }
+            // --- END REVISED LOGIC ---
+
             const exigibilidade = (codMunEmpresa === codMunPrestacao) ? "1" : "2";
 
             return {
@@ -818,7 +843,7 @@
                 prestadorNum: notaTxt["Número do Endereço do Prestador"],
                 prestadorComp: notaTxt["Complemento do Endereço do Prestador"],
                 prestadorBairro: notaTxt["Bairro do Prestador"],
-                prestadorCodMun: prestadorCodMun,
+                prestadorCodMun: findIBGECode(prestadorCidade, prestadorUf),
                 prestadorUF: prestadorUf,
                 prestadorCEP: notaTxt["CEP do Prestador"]?.replace(/\D/g, ''),
                 competencia: notaTxt["Data do Fato Gerador"],
