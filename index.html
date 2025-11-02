@@ -161,6 +161,7 @@
         let codigosIBGE = {};
         let normalizedCodigosIBGE = {};
         let codigosPorUF = {};
+        let reverseCodigosIBGE = {};
 
         // --- Referências aos Elementos do DOM ---
         const cnpjInput = document.getElementById('cnpjCliente');
@@ -315,8 +316,13 @@
                     const [cidade, uf] = key.split('|');
                     if (!cidade || !uf) continue;
 
+                    const code = codigosIBGE[key];
+                    if (code && code !== '0') {
+                        reverseCodigosIBGE[code] = { cidade, uf };
+                    }
+
                     const normalizedKey = normalizeForLookup(key);
-                    normalizedCodigosIBGE[normalizedKey] = codigosIBGE[key];
+                    normalizedCodigosIBGE[normalizedKey] = code;
                     
                     if (!codigosPorUF[uf]) {
                         codigosPorUF[uf] = [];
@@ -324,7 +330,7 @@
                     codigosPorUF[uf].push({
                         original: cidade,
                         normalized: normalizeForLookup(cidade),
-                        code: codigosIBGE[key]
+                        code: code
                     });
                 }
                 
@@ -748,7 +754,6 @@
             };
         }
 
-
         function mapearTxtParaPadronizado(notaTxt, codMunEmpresa) {
              const prestadorCidade = notaTxt["Cidade do Prestador"];
              const prestadorUf = notaTxt["UF do Prestador"];
@@ -777,10 +782,24 @@
 
             const prestadorCodMun = findIBGECode(prestadorCidade, prestadorUf);
             let codMunPrestacao = notaTxt["Município Prestação - cód. IBGE"];
+            let prestacaoLocal = '';
+
             if (!codMunPrestacao || codMunPrestacao === '0') {
                 codMunPrestacao = prestadorCodMun;
             }
 
+            // Look up city/UF name from the IBGE code
+            if (codMunPrestacao && reverseCodigosIBGE[codMunPrestacao]) {
+                const { cidade, uf } = reverseCodigosIBGE[codMunPrestacao];
+                prestacaoLocal = `${cidade} - ${uf}`;
+            } else if (codMunPrestacao === prestadorCodMun) {
+                // Fallback to provider's city if codes match
+                prestacaoLocal = `${prestadorCidade} - ${prestadorUf}`;
+            } else {
+                log(`Não foi possível encontrar o nome do município para o código IBGE de prestação: ${codMunPrestacao}`, 'error');
+                prestacaoLocal = 'Local_Desconhecido';
+            }
+            
             const exigibilidade = (codMunEmpresa === codMunPrestacao) ? "1" : "2";
 
             return {
@@ -815,7 +834,7 @@
                 itemLista: mapaServicos[codServicoOriginal] || codServicoOriginal,
                 codCnae: '', 
                 codMunPrestacao: codMunPrestacao,
-                prestacaoLocal: '', // O TXT não informa o nome da cidade de prestação
+                prestacaoLocal: prestacaoLocal,
                 tomadorDoc: notaTxt["CPF/CNPJ do Tomador"]?.replace(/\D/g, ''),
                 tomadorRazao: normalizeName(notaTxt["Razão Social do Tomador"]),
                 tomadorEnd: notaTxt["Endereço do Tomador"],
