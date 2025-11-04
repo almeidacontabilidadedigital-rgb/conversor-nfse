@@ -243,10 +243,13 @@
                 return '9999999'; // Código para "Exterior" ou erro
             }
 
+            // Pré-processa o nome da cidade para remover sufixos em parênteses, como (CAPITAL)
+            const cidadeTratada = cidade.replace(/\s*\([^)]*\)/, '').trim();
+
             const ufUpper = uf.toUpperCase();
             
             // 1. Tentativa de busca normalizada (rápida), que cobre a maioria dos casos
-            const normalizedKey = normalizeForLookup(`${cidade}|${ufUpper}`);
+            const normalizedKey = normalizeForLookup(`${cidadeTratada}|${ufUpper}`);
             if (normalizedCodigosIBGE[normalizedKey]) {
                 return normalizedCodigosIBGE[normalizedKey];
             }
@@ -254,7 +257,7 @@
             // 2. Tentativa de busca por aproximação (Levenshtein) dentro da UF correta
             const cidadesDaUF = codigosPorUF[ufUpper];
             if (cidadesDaUF) {
-                const normalizedCidadeInput = normalizeForLookup(cidade);
+                const normalizedCidadeInput = normalizeForLookup(cidadeTratada);
                 let bestMatch = null;
                 let minDistance = Infinity;
 
