@@ -274,7 +274,7 @@
             "03433": "17.15", "03450": "17.17", "03468": "17.17", "03476": "17.18", "03611": "17.18", "03620": "17.18", "03638": "17.18",
             "03654": "17.19", "03670": "17.19", "03700": "17.19", "03719": "17.20", "03743": "17.22", "03751": "17.23", "03877": "21.01",
             "03878": "21.01", "03956": "29.01", "03980": "17.01", "03981": "17.11", "04030": "4.01", "04073": "4.01", "04111": "4.01",
-            "04139": "4.02", "04140": "4.02", "04146": "4.02", "04154": "4.02", "04170": "4.02", "04189": "4.03", "04197": "4.03",
+            "04139": "4.02", "04140": "4.02", "04146": "4.02", "04154": "4.02", "04170": "4.02", "4170": "4.02", "04189": "4.03", "04197": "4.03",
             "04219": "4.03", "04235": "4.03", "04251": "4.04", "04260": "4.05", "04278": "4.05", "04316": "4.06", "04340": "4.06",
             "04359": "4.06", "04375": "4.06", "04383": "4.07", "04391": "4.08", "04421": "4.08", "04430": "4.08", "04472": "4.08",
             "04499": "4.08", "04502": "4.08", "04510": "4.08", "04545": "4.08", "04553": "4.08", "04588": "4.09", "04596": "4.09",
@@ -328,7 +328,7 @@
             "08250": "4.21", "08251": "4.22", "08252": "4.23", "08253": "5.01", "08254": "5.02", "08255": "5.03", "08256": "5.04",
             "08257": "5.05", "08258": "5.06", "08259": "5.07", "08260": "5.08", "08261": "5.09", "08262": "6.01", "08263": "6.02",
             "08264": "6.03", "08265": "6.04", "08266": "6.05", "08267": "8.01", "08268": "8.02", "08269": "15.01", "08270": "15.02",
-            "08271": "15.03", "08272": "15.04", "08273": "15.05", "08274": "15.06", "08275": "15.07", "08276": "15.08", "08277": "15.09",
+            "08271": "15.03", "08272": "15.04", "08273": "15.05", "08274": "15.06", "08275": "15.07", "08276": "15.08", "08277": "15.10",
             "08278": "15.10", "08279": "15.11", "08280": "15.12", "08281": "15.13", "08282": "15.14", "08283": "15.15", "08284": "15.16",
             "08285": "15.17", "08286": "15.18", "08287": "18.01", "08288": "10.01", "08289": "10.02", "08290": "10.03", "08291": "10.04",
             "08292": "10.05", "08293": "10.06", "08294": "10.07", "08295": "10.08", "08296": "10.09", "08297": "10.10", "08298": "17.04",
@@ -403,9 +403,29 @@
             return node ? node.textContent.trim() : defaultValue;
         }
         
-        const safeParseFloat = (value) => {
+        function safeParseFloat(value) {
             if (typeof value !== 'string') value = String(value || '0');
-            return parseFloat(value.replace(/\./g, '').replace(',', '.')) || 0;
+            value = value.trim();
+            if (!value) return 0;
+
+            const hasComma = value.indexOf(',') !== -1;
+            const hasDot = value.indexOf('.') !== -1;
+
+            if (hasComma && !hasDot) {
+                // 123,45 -> 123.45 (PT-BR)
+                return parseFloat(value.replace(',', '.'));
+            }
+            if (hasComma && hasDot) {
+                if (value.lastIndexOf('.') < value.lastIndexOf(',')) {
+                    // 1.234,56 (PT-BR) -> Remove dots, replace comma
+                    return parseFloat(value.replace(/\./g, '').replace(',', '.'));
+                } else {
+                    // 1,234.56 (EN-US with separator) -> Remove commas
+                    return parseFloat(value.replace(/,/g, ''));
+                }
+            }
+            // 123.45 (EN-US simple) or 123 (Int)
+            return parseFloat(value);
         }
 
        const formatCurrency = (value) => (value || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -723,6 +743,11 @@
             const tomadorEnd = tomadorNode.querySelector('Endereco');
             const prestadorEnd = prestadorNode.querySelector('Endereco');
 
+            // Ajuste na leitura da alíquota para suportar decimal (0.025) e percentual (2.5)
+            // Se for < 1 (ex: 0.025), multiplica por 100. Se for > 1 (ex: 2.5), mantém.
+            const rawAliquota = safeParseFloat(getNodeText(valoresServicoNode, 'Aliquota'));
+            const aliquota = (rawAliquota > 0 && rawAliquota < 1) ? rawAliquota * 100 : rawAliquota;
+
             return {
                 numero: getNodeText(infNfse, 'Numero'),
                 codigoVerificacao: getNodeText(infNfse, 'CodigoVerificacao'),
@@ -732,15 +757,15 @@
                 situacao: 'NORMAL',
                 valorServico: safeParseFloat(getNodeText(valoresServicoNode, 'ValorServicos')),
                 valorDeducao: safeParseFloat(getNodeText(valoresServicoNode, 'ValorDeducoes')),
-                valorPIS: safeParseFloat(getNodeText(valoresServicoNode, 'ValorPis')),
-                valorCOFINS: safeParseFloat(getNodeText(valoresServicoNode, 'ValorCofins')),
-                valorINSS: safeParseFloat(getNodeText(valoresServicoNode, 'ValorInss')),
-                valorIR: safeParseFloat(getNodeText(valoresServicoNode, 'ValorIr')),
-                valorCSLL: safeParseFloat(getNodeText(valoresServicoNode, 'ValorCsll')),
+                valorPis: safeParseFloat(getNodeText(valoresServicoNode, 'ValorPis')),
+                valorCofins: safeParseFloat(getNodeText(valoresServicoNode, 'ValorCofins')),
+                valorInss: safeParseFloat(getNodeText(valoresServicoNode, 'ValorInss')),
+                valorIr: safeParseFloat(getNodeText(valoresServicoNode, 'ValorIr')),
+                valorCsll: safeParseFloat(getNodeText(valoresServicoNode, 'ValorCsll')),
                 issRetido: getNodeText(valoresServicoNode, 'IssRetido', '2'),
                 valorIss: safeParseFloat(getNodeText(valoresServicoNode, 'ValorIss')),
                 valorIssRetido: safeParseFloat(getNodeText(valoresServicoNode, 'ValorIssRetido')),
-                aliquota: safeParseFloat(getNodeText(valoresServicoNode, 'Aliquota')) * 100,
+                aliquota: aliquota,
                 itemLista: getNodeText(servicoNode, 'ItemListaServico'),
                 codigoTributacaoMunicipio: getNodeText(servicoNode, 'CodigoTributacaoMunicipio'),
                 codCnae: getNodeText(servicoNode, 'CodigoCnae'),
@@ -783,6 +808,42 @@
             }
             
             const prestadorUF = getNodeText(notaNode, 'DadosPrestador > uf');
+            
+            // Novos campos solicitados para retenções e ISS, buscando em todo o nó da nota caso a estrutura varie
+            // Prioridade para DetalhesServico mas com fallback
+            const getVal = (tag) => safeParseFloat(getNodeText(notaNode, `DetalhesServico > ${tag}`) || getNodeText(notaNode, tag));
+
+            const valorServico = getVal('valorServico');
+            const valorPIS = getVal('pispasep');
+            const valorCOFINS = getVal('cofins');
+            const valorINSS = getVal('inss');
+            const valorIR = getVal('ir');
+            const valorCSLL = getVal('csll');
+            
+            const valorIss = getVal('valorIss');
+            const aliquota = getVal('aliquota');
+            const issRetidoRaw = getNodeText(notaNode, 'DetalhesServico > issretido') || getNodeText(notaNode, 'issretido');
+            const isRetido = issRetidoRaw === '1';
+            const issRetido = isRetido ? '1' : '2';
+            const valorIssRetido = isRetido ? valorIss : 0; 
+
+            // Lógica de Local da Prestação baseada em <outromunicipio>
+            const outroMunicipio = getNodeText(notaNode, 'DetalhesServico > outromunicipio') || getNodeText(notaNode, 'outromunicipio');
+            // 1 = Prestado no município (Prestador)
+            // 2 = Prestado em outro município
+            
+            // Dados do Tomador para identificar local se for fora
+            const tomadorCidade = getNodeText(notaNode, 'DadosTomador > cidade');
+            const tomadorUF = getNodeText(notaNode, 'DadosTomador > uf');
+            const tomadorCodMun = findIBGECode(tomadorCidade, tomadorUF);
+            
+            let codMunPrestacao = config.codMunEmpresa;
+            let prestacaoLocal = `${config.municipioEmpresa} - ${config.ufEmpresa}`;
+
+            if (outroMunicipio === '2') {
+                codMunPrestacao = tomadorCodMun;
+                prestacaoLocal = `${tomadorCidade} - ${tomadorUF}`;
+            }
 
             return {
                 numero: getNodeText(notaNode, 'NfeCabecario > numeroNota'),
@@ -791,15 +852,21 @@
                 competencia: dataEmissao,
                 discriminacao: getNodeText(notaNode, 'DetalhesServico > descricao'),
                 situacao: 'NORMAL',
-                valorServico: safeParseFloat(getNodeText(notaNode, 'DetalhesServico > valorServico')),
-                valorDeducao: 0, valorPIS: 0, valorCOFINS: 0, valorINSS: 0, valorIR: 0, valorCSLL: 0, valorIss: 0,
-                issRetido: getNodeText(notaNode, 'DetalhesServico > issretido') === '1' ? '1' : '2',
-                valorIssRetido: safeParseFloat(getNodeText(notaNode, 'DetalhesServico > valorissretido')),
-                aliquota: safeParseFloat(getNodeText(notaNode, 'DetalhesServico > aliquotaServico')),
+                valorServico: valorServico,
+                valorDeducao: 0, 
+                valorPis: valorPIS, 
+                valorCofins: valorCOFINS, 
+                valorInss: valorINSS, 
+                valorIr: valorIR, 
+                valorCsll: valorCSLL, 
+                valorIss: valorIss,
+                issRetido: issRetido,
+                valorIssRetido: valorIssRetido,
+                aliquota: aliquota,
                 itemLista: itemListaServico,
                 codigoTributacaoMunicipio: codServicoRaw,
-                codMunPrestacao: config.codMunEmpresa,
-                prestacaoLocal: `${config.municipioEmpresa} - ${config.ufEmpresa}`,
+                codMunPrestacao: codMunPrestacao,
+                prestacaoLocal: prestacaoLocal,
                 exigibilidadeISS: '1',
                 optanteSimples: getNodeText(notaNode, 'NfeCabecario > optIncentivoFiscal').includes('Não') ? '2' : '1',
                 prestadorCnpj: getNodeText(notaNode, 'DadosPrestador > documento').replace(/\D/g, ''),
@@ -813,8 +880,8 @@
                 tomadorNum: getNodeText(notaNode, 'DadosTomador > numero'),
                 tomadorComp: getNodeText(notaNode, 'DadosTomador > complemento'),
                 tomadorBairro: getNodeText(notaNode, 'DadosTomador > bairro'),
-                tomadorCodMun: findIBGECode(getNodeText(notaNode, 'DadosTomador > cidade'), getNodeText(notaNode, 'DadosTomador > uf')),
-                tomadorUF: getNodeText(notaNode, 'DadosTomador > uf'),
+                tomadorCodMun: tomadorCodMun,
+                tomadorUF: tomadorUF,
                 tomadorCEP: getNodeText(notaNode, 'DadosTomador > cep').replace(/\D/g, ''),
                 tomadorEmail: getNodeText(notaNode, 'DadosTomador > email'),
             };
@@ -910,7 +977,8 @@
                 competenciaFormatada = competenciaFormatada.split('T')[0];
             }
             
-            let valorLiquido = nota.valorServico - nota.valorIR - nota.valorPIS - nota.valorCOFINS - nota.valorCSLL - nota.valorINSS - nota.valorIssRetido - nota.valorDeducao;
+            // Cálculo do Valor Líquido = Serviço - Retenções
+            let valorLiquido = nota.valorServico - nota.valorIr - nota.valorPis - nota.valorCofins - nota.valorCsll - nota.valorInss - nota.valorIssRetido - nota.valorDeducao;
 
             return `<CompNfse xmlns="http://www.abrasf.org.br/nfse.xsd">
     <Nfse versao="2.01">
@@ -921,7 +989,7 @@
             ${outrasInfo ? `<OutrasInformacoes>${escapeXML(outrasInfo)}</OutrasInformacoes>` : ''}
             <ValoresNfse>
                 <BaseCalculo>${nota.valorServico.toFixed(2)}</BaseCalculo>
-                <Aliquota>${(nota.aliquota / 100).toFixed(4)}</Aliquota>
+                <Aliquota>${nota.aliquota}</Aliquota>
                 <ValorIss>${nota.valorIss.toFixed(2)}</ValorIss>
                 <ValorLiquidoNfse>${valorLiquido.toFixed(2)}</ValorLiquidoNfse>
             </ValoresNfse>
@@ -947,18 +1015,18 @@
                         <Valores>
                             <ValorServicos>${nota.valorServico.toFixed(2)}</ValorServicos>
                             <ValorDeducoes>${nota.valorDeducao.toFixed(2)}</ValorDeducoes>
-                            <ValorPis>${nota.valorPIS.toFixed(2)}</ValorPis>
-                            <ValorCofins>${nota.valorCOFINS.toFixed(2)}</ValorCofins>
-                            <ValorInss>${nota.valorINSS.toFixed(2)}</ValorInss>
-                            <ValorIr>${nota.valorIR.toFixed(2)}</ValorIr>
-                            <ValorCsll>${nota.valorCSLL.toFixed(2)}</ValorCsll>
-                            <IssRetido>${nota.issRetido}</IssRetido>
+                            <ValorPis>${nota.valorPis.toFixed(2)}</ValorPis>
+                            <ValorCofins>${nota.valorCofins.toFixed(2)}</ValorCofins>
+                            <ValorInss>${nota.valorInss.toFixed(2)}</ValorInss>
+                            <ValorIr>${nota.valorIr.toFixed(2)}</ValorIr>
+                            <ValorCsll>${nota.valorCsll.toFixed(2)}</ValorCsll>
+                            <OutrasRetencoes>0.00</OutrasRetencoes>
                             <ValorIss>${nota.valorIss.toFixed(2)}</ValorIss>
-                            <ValorIssRetido>${nota.valorIssRetido.toFixed(2)}</ValorIssRetido>
-                            <BaseCalculo>${nota.valorServico.toFixed(2)}</BaseCalculo>
-                            <Aliquota>${(nota.aliquota / 100).toFixed(4)}</Aliquota>
-                            <ValorLiquidoNfse>${valorLiquido.toFixed(2)}</ValorLiquidoNfse>
+                            <Aliquota>${nota.aliquota}</Aliquota>
+                            <DescontoIncondicionado>0.00</DescontoIncondicionado>
+                            <DescontoCondicionado>0.00</DescontoCondicionado>
                         </Valores>
+                        <IssRetido>${nota.issRetido}</IssRetido>
                         <ItemListaServico>${nota.itemLista}</ItemListaServico>
                         ${nota.codCnae ? `<CodigoCnae>${nota.codCnae}</CodigoCnae>` : ''}
                         <Discriminacao>${escapeXML(descricaoPrincipal)}</Discriminacao>
@@ -1050,7 +1118,7 @@
                     acc[location].count++;
                     acc[location].valorServico += nota.valorServico;
                     acc[location].valorIss += nota.valorIss;
-                    nota.valorLiquido = nota.valorServico - (nota.valorIR || 0) - (nota.valorPIS || 0) - (nota.valorCOFINS || 0) - (nota.valorCSLL || 0) - (nota.valorINSS || 0) - (nota.valorIssRetido || 0) - (nota.valorDeducao || 0);
+                    nota.valorLiquido = nota.valorServico - (nota.valorIr || 0) - (nota.valorPis || 0) - (nota.valorCofins || 0) - (nota.valorCsll || 0) - (nota.valorInss || 0) - (nota.valorIssRetido || 0) - (nota.valorDeducao || 0);
                     acc[location].valorLiquido += nota.valorLiquido;
                     return acc;
                 }, {});
@@ -1066,14 +1134,14 @@
                 const head = [['Nº', 'Data', 'Local Prest.', 'Vlr. Serviço', 'Base ISS', 'Alíq.', 'Vlr. ISS', 'Vlr. IR', 'Vlr. PIS', 'Vlr. COFINS', 'Vlr. CSLL', 'Vlr. INSS', 'Outros', 'Base Ret.', 'Vlr. ISS Ret.', 'Vlr. Líquido', 'Status', 'Cód. Serv.']];
                 let totais = { valServ: 0, baseNorm: 0, issNorm: 0, ir: 0, pis: 0, cofins: 0, csll: 0, inss: 0, outros: 0, baseRet: 0, issRet: 0, liq: 0 };
                 const body = colNotas.map(nota => {
-                    nota.valorLiquido = nota.valorServico - (nota.valorIR || 0) - (nota.valorPIS || 0) - (nota.valorCOFINS || 0) - (nota.valorCSLL || 0) - (nota.valorINSS || 0) - (nota.valorIssRetido || 0) - (nota.valorDeducao || 0);
+                    nota.valorLiquido = nota.valorServico - (nota.valorIr || 0) - (nota.valorPis || 0) - (nota.valorCofins || 0) - (nota.valorCsll || 0) - (nota.valorInss || 0) - (nota.valorIssRetido || 0) - (nota.valorDeducao || 0);
                     const baseCalculoNormal = nota.issRetido === "1" ? 0 : nota.valorServico;
                     const vlrIssNormal = nota.issRetido === "1" ? 0 : nota.valorIss;
                     const baseCalculoRetido = nota.issRetido === "1" ? nota.valorServico : 0;
-                    totais.valServ += nota.valorServico; totais.baseNorm += baseCalculoNormal; totais.issNorm += vlrIssNormal; totais.ir += nota.valorIR;
-                    totais.pis += nota.valorPIS; totais.cofins += nota.valorCOFINS; totais.csll += nota.valorCSLL; totais.inss += nota.valorINSS;
+                    totais.valServ += nota.valorServico; totais.baseNorm += baseCalculoNormal; totais.issNorm += vlrIssNormal; totais.ir += nota.valorIr;
+                    totais.pis += nota.valorPis; totais.cofins += nota.valorCofins; totais.csll += nota.valorCsll; totais.inss += nota.valorInss;
                     totais.outros += nota.valorDeducao; totais.baseRet += baseCalculoRetido; totais.issRet += nota.valorIssRetido; totais.liq += nota.valorLiquido;
-                    return [nota.numero, (nota.dataEmissao || '').split('T')[0], nota.prestacaoLocal, formatCurrency(nota.valorServico), formatCurrency(baseCalculoNormal), `${(nota.aliquota || 0).toFixed(2)}%`, formatCurrency(vlrIssNormal), formatCurrency(nota.valorIR), formatCurrency(nota.valorPIS), formatCurrency(nota.valorCOFINS), formatCurrency(nota.valorCSLL), formatCurrency(nota.valorINSS), formatCurrency(nota.valorDeducao), formatCurrency(baseCalculoRetido), formatCurrency(nota.valorIssRetido), formatCurrency(nota.valorLiquido), 'Autorizada', nota.itemLista];
+                    return [nota.numero, (nota.dataEmissao || '').split('T')[0], nota.prestacaoLocal, formatCurrency(nota.valorServico), formatCurrency(baseCalculoNormal), `${(nota.aliquota || 0).toFixed(2)}%`, formatCurrency(vlrIssNormal), formatCurrency(nota.valorIr), formatCurrency(nota.valorPis), formatCurrency(nota.valorCofins), formatCurrency(nota.valorCsll), formatCurrency(nota.valorInss), formatCurrency(nota.valorDeducao), formatCurrency(baseCalculoRetido), formatCurrency(nota.valorIssRetido), formatCurrency(nota.valorLiquido), 'Autorizada', nota.itemLista];
                 });
                 const foot = [[{ content: 'TOTAIS', colSpan: 3, styles: { halign: 'right', fontStyle: 'bold' } }, formatCurrency(totais.valServ), formatCurrency(totais.baseNorm), '', formatCurrency(totais.issNorm), formatCurrency(totais.ir), formatCurrency(totais.pis), formatCurrency(totais.cofins), formatCurrency(totais.csll), formatCurrency(totais.inss), formatCurrency(totais.outros), formatCurrency(totais.baseRet), formatCurrency(totais.issRet), formatCurrency(totais.liq), '', '']];
                 doc.autoTable({
