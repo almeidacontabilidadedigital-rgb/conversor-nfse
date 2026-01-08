@@ -81,7 +81,7 @@
                             <input type="text" id="razaoSocialEmpresa" placeholder="Preenchido automaticamente" class="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-100 cursor-not-allowed" disabled>
                         </div>
                         <div>
-                            <label for="imEmpresa" class="block text-sm font-medium text-gray-600 mb-1">Inscrição Municipal</label>
+                            <label for="imEmpresa" class="block text-sm font-medium text-gray-600 mb-1">Inscrição Municipal <span class="text-xs text-gray-400 font-normal">(Opcional se constar no arquivo)</span></label>
                             <input type="text" id="imEmpresa" placeholder="Digite a Inscrição Municipal" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition">
                         </div>
                     </div>
@@ -103,7 +103,7 @@
                     <div>
                         <label class="block text-sm font-medium text-gray-600 mb-1">Modo de Geração</label>
                         <div id="modoGeracao" class="flex space-x-2">
-                            <button data-mode="LOTE" class="flex-1 py-2 px-4 rounded-lg border transition text-gray-600 hover:bg-blue-500 hover:text-white">Em Lote</button>
+                            <button data-mode="LOTE" class="flex-1 py-2 px-4 rounded-lg border transition active text-gray-600 hover:bg-blue-500 hover:text-white active">Em Lote</button>
                             <button data-mode="INDIVIDUAL" class="flex-1 py-2 px-4 rounded-lg border transition text-gray-600 hover:bg-blue-500 hover:text-white">Individual</button>
                         </div>
                     </div>
@@ -209,7 +209,7 @@
 		const { jsPDF } = window.jspdf;
 
         // --- Variáveis Globais e Estado da Aplicação ---
-        let modoGeracaoEscolhido = null;
+        let modoGeracaoEscolhido = 'LOTE'; 
         let arquivosSelecionados = [];
         let activeTab = 'xml';
         let codigosIBGE = {};
@@ -631,14 +631,14 @@
         /** Atualiza o estado do botão "Processar Arquivos" */
         function updateProcessarBtnState() {
             const cnpjValido = cnpjInput.value.replace(/\D/g, '').length === 14;
-            const imValida = imEmpresaInput.value.trim() !== '';
+            // imValida removido da validação obrigatória
             const ufValida = ufEmpresaSelect.value !== '';
             const municipioValido = municipioEmpresaInput.value.trim() !== '';
             const modoValido = modoGeracaoEscolhido !== null;
             const arquivosValidos = arquivosSelecionados.length > 0;
             const competenciaValida = activeTab !== 'pdf' || (competenciaMesSelect.value !== '' && competenciaAnoInput.value !== '');
             
-            processarBtn.disabled = !(cnpjValido && imValida && ufValida && municipioValido && modoValido && arquivosValidos && competenciaValida);
+            processarBtn.disabled = !(cnpjValido && ufValida && municipioValido && modoValido && arquivosValidos && competenciaValida);
         }
 
         /** Atualiza a lista de arquivos exibida na UI */
@@ -936,6 +936,200 @@
             };
         }
 
+        function mapearTxtPaulistana(fileText, config) {
+            const linhas = fileText.split(/\r?\n/);
+            const notas = [];
+            
+            log(`Lendo arquivo TXT...`, 'info');
+
+            // Helper para parsear valores PT-BR (1.000,00)
+            const parseTxtValue = (str) => {
+                if (!str) return 0;
+                const clean = str.trim();
+                if (!clean) return 0;
+                // Remove pontos de milhar e troca vírgula decimal por ponto
+                const normalized = clean.replace(/\./g, '').replace(',', '.');
+                return parseFloat(normalized) || 0;
+            };
+
+            const isTabSeparated = fileText.indexOf('\t') !== -1;
+
+            if (isTabSeparated) {
+                 log(`Detectado formato TXT Tabulado (Exportação padrão SP).`, 'info');
+            } else {
+                 log(`Detectado formato TXT Posiicional (Layout antigo/CNAB).`, 'info');
+            }
+
+            for (const linha of linhas) {
+                // Filtra linhas que começam com '2' (Registro de NF-e)
+                if (!linha.startsWith('2')) continue;
+
+                try {
+                    let numero, dataEmissao, tomadorDoc, valorServico, valorDeducao, codServicoSP, aliquota, valorIss, issRetidoRaw, issRetido, valorIssRetido, discriminacao, prestadorIMArquivo;
+                    let prestadorRazao = config.razaoSocialPrestador;
+                    let tomadorRazao = 'TOMADOR DIVERSOS';
+                    let tomadorEnd = '', tomadorNum = '', tomadorComp = '', tomadorBairro = '', tomadorCidade = '', tomadorUF = '', tomadorCEP = '', tomadorEmail = '';
+                    let situacao = 'NORMAL';
+                    let valorPis = 0, valorCofins = 0, valorInss = 0, valorIr = 0, valorCsll = 0;
+                    let codigoVerificacao = '';
+
+                    if (isTabSeparated) {
+                        const cols = linha.split('\t');
+                        // Mapeamento baseado no cabeçalho fornecido e amostra
+                        // 0: Tipo (2)
+                        // 1: Numero
+                        numero = cols[1].trim();
+                        
+                        // 2: Data Hora (01/12/2025 11:26:36)
+                        const dataRaw = cols[2].trim(); 
+                        if (dataRaw) {
+                            // Pega apenas a data DD/MM/AAAA
+                            const datePart = dataRaw.split(' ')[0]; 
+                            const [d, m, y] = datePart.split('/');
+                            dataEmissao = `${y}-${m}-${d}`;
+                        }
+
+                        // 3: Código de Verificação
+                        codigoVerificacao = cols[3].trim();
+
+                        // 8: IM Prestador
+                        prestadorIMArquivo = cols[8].trim();
+
+                        // 23: Data de Cancelamento (se houver, é cancelada)
+                        if (cols[23] && cols[23].trim().length > 0) {
+                            situacao = 'CANCELADA';
+                        }
+
+                        // 26: Valor Serviços
+                        valorServico = parseTxtValue(cols[26]);
+                        // 27: Valor Deduções
+                        valorDeducao = parseTxtValue(cols[27]);
+                        // 28: Código Serviço
+                        codServicoSP = cols[28].trim();
+                        // 29: Alíquota
+                        aliquota = parseTxtValue(cols[29]);
+                        // 30: ISS Devido
+                        valorIss = parseTxtValue(cols[30]);
+                        // 32: ISS Retido (S/N) -> N=2, S=1
+                        issRetidoRaw = cols[32].trim().toUpperCase(); 
+                        issRetido = issRetidoRaw === 'S' ? '1' : '2';
+                        valorIssRetido = issRetido === '1' ? valorIss : 0;
+
+                        // Tomador
+                        // 34: CPF/CNPJ
+                        tomadorDoc = cols[34].trim();
+                        // 37: Razão Social
+                        tomadorRazao = cols[37].trim() || 'TOMADOR DIVERSOS';
+                        
+                        // Endereço Tomador
+                        // 39: Endereço (Logradouro)
+                        tomadorEnd = cols[39].trim();
+                        // 40: Numero
+                        tomadorNum = cols[40].trim();
+                        // 41: Complemento
+                        tomadorComp = cols[41].trim();
+                        // 42: Bairro
+                        tomadorBairro = cols[42].trim();
+                        // 43: Cidade
+                        tomadorCidade = cols[43].trim();
+                        // 44: UF
+                        tomadorUF = cols[44].trim();
+                        // 45: CEP
+                        tomadorCEP = cols[45].trim();
+                        // 46: Email
+                        tomadorEmail = cols[46].trim();
+
+                        // Retenções Federais (conforme colunas do TXT Exportação SP)
+                        // 54: PIS/PASEP
+                        valorPis = parseTxtValue(cols[54]);
+                        // 55: COFINS
+                        valorCofins = parseTxtValue(cols[55]);
+                        // 56: INSS
+                        valorInss = parseTxtValue(cols[56]);
+                        // 57: IR
+                        valorIr = parseTxtValue(cols[57]);
+                        // 58: CSLL
+                        valorCsll = parseTxtValue(cols[58]);
+
+                        // Ultima coluna: Discriminação 
+                        discriminacao = cols[cols.length - 1].trim();
+                        if (!discriminacao && cols.length > 80) {
+                             // Fallback se a última for vazia
+                             discriminacao = cols[cols.length - 2]?.trim() || '';
+                        }
+
+                    } else {
+                        // Lógica Posicional Antiga (Mantida como fallback)
+                        numero = linha.substring(1, 9).trim();
+                        const dataRaw = linha.substring(9, 17).trim(); // AAAAMMDD
+                        if (dataRaw.length === 8) {
+                            dataEmissao = `${dataRaw.substring(0,4)}-${dataRaw.substring(4,6)}-${dataRaw.substring(6,8)}`;
+                        }
+                        tomadorDoc = linha.substring(31, 45).trim();
+                        valorServico = parseInt(linha.substring(90, 105)) / 100;
+                        valorDeducao = parseInt(linha.substring(105, 120)) / 100;
+                        codServicoSP = linha.substring(120, 125).trim();
+                        aliquota = parseInt(linha.substring(125, 129)) / 100;
+                        valorIss = parseInt(linha.substring(129, 144)) / 100;
+                        issRetidoRaw = linha.substring(144, 145);
+                        issRetido = issRetidoRaw === '1' ? '1' : '2';
+                        valorIssRetido = issRetido === '1' ? valorIss : 0;
+                        prestadorIMArquivo = linha.substring(145, 153).trim();
+                        discriminacao = linha.substring(165).trim();
+                    }
+
+                    // Tenta encontrar o código ABRASF para o serviço (com padStart para garantir 5 digitos se necessário, mas o mapa já tem strings)
+                    const itemLista = mapaServicos[codServicoSP] || mapaServicos[codServicoSP.padStart(5, '0')] || codServicoSP;
+                    const tomadorCodMun = findIBGECode(tomadorCidade, tomadorUF);
+
+                    notas.push({
+                        numero: numero,
+                        codigoVerificacao: codigoVerificacao,
+                        dataEmissao: dataEmissao,
+                        competencia: dataEmissao,
+                        discriminacao: discriminacao,
+                        situacao: situacao,
+                        valorServico: valorServico,
+                        valorDeducao: valorDeducao,
+                        valorPis: valorPis,
+                        valorCofins: valorCofins,
+                        valorInss: valorInss,
+                        valorIr: valorIr,
+                        valorCsll: valorCsll,
+                        valorIss: valorIss,
+                        issRetido: issRetido,
+                        valorIssRetido: valorIssRetido,
+                        aliquota: aliquota,
+                        itemLista: itemLista,
+                        codigoTributacaoMunicipio: codServicoSP,
+                        codCnae: '',
+                        codMunPrestacao: config.codMunEmpresa,
+                        prestacaoLocal: `${config.municipioEmpresa} - ${config.ufEmpresa}`,
+                        exigibilidadeISS: '1',
+                        optanteSimples: '2', // Assumido 2 por padrão se não mapeado explicitamente
+                        prestadorCnpj: config.cnpjPrestador,
+                        prestadorIM: prestadorIMArquivo || config.inscricaoMunicipalPrestador,
+                        prestadorRazao: config.razaoSocialPrestador,
+                        prestadorCodMun: config.codMunEmpresa,
+                        prestadorUF: config.ufPrestador,
+                        tomadorDoc: tomadorDoc,
+                        tomadorRazao: tomadorRazao,
+                        tomadorEnd: tomadorEnd,
+                        tomadorNum: tomadorNum,
+                        tomadorComp: tomadorComp,
+                        tomadorBairro: tomadorBairro,
+                        tomadorCodMun: tomadorCodMun,
+                        tomadorUF: tomadorUF,
+                        tomadorCEP: tomadorCEP,
+                        tomadorEmail: tomadorEmail
+                    });
+                } catch (e) {
+                    console.warn("Erro ao ler linha TXT SP:", linha, e);
+                }
+            }
+            return notas;
+        }
+
         async function processarArquivo(file, config) {
             try {
                 const encoding = activeTab === 'txt' ? 'ISO-8859-1' : 'UTF-8';
@@ -949,6 +1143,11 @@
                     const result = mapearXmlParaPadronizado(xmlDoc, config);
                     return Array.isArray(result) ? result : [result];
                 }
+                
+                if (activeTab === 'txt') {
+                    return mapearTxtPaulistana(fileText, config);
+                }
+
                 log(`Processador para a aba "${activeTab}" ainda não implementado.`, 'error');
                 return [];
 
@@ -961,26 +1160,29 @@
         // --- Funções de Geração de Arquivos ---
         
         function gerarXML_CompNfse(nota, config) {
-            let outrasInfo = '';
-            let descricaoPrincipal = nota.discriminacao || '';
-            const tribAproxIndex = descricaoPrincipal.toLowerCase().indexOf("trib aprox");
-            if (tribAproxIndex > -1) {
-                outrasInfo = descricaoPrincipal.substring(tribAproxIndex);
-                descricaoPrincipal = descricaoPrincipal.substring(0, tribAproxIndex).trim();
-            }
-            
-            let competenciaFormatada = nota.competencia;
-            if (competenciaFormatada && competenciaFormatada.includes('/')) {
-                const parts = competenciaFormatada.split(' ')[0].split('/');
-                if(parts.length === 3) competenciaFormatada = `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
-            } else if (competenciaFormatada) {
-                competenciaFormatada = competenciaFormatada.split('T')[0];
-            }
-            
-            // Cálculo do Valor Líquido = Serviço - Retenções
-            let valorLiquido = nota.valorServico - nota.valorIr - nota.valorPis - nota.valorCofins - nota.valorCsll - nota.valorInss - nota.valorIssRetido - nota.valorDeducao;
+            try {
+                const safeToFixed = (val) => (typeof val === 'number' && !isNaN(val)) ? val.toFixed(2) : '0.00';
 
-            return `<CompNfse xmlns="http://www.abrasf.org.br/nfse.xsd">
+                let outrasInfo = '';
+                let descricaoPrincipal = nota.discriminacao || '';
+                const tribAproxIndex = descricaoPrincipal.toLowerCase().indexOf("trib aprox");
+                if (tribAproxIndex > -1) {
+                    outrasInfo = descricaoPrincipal.substring(tribAproxIndex);
+                    descricaoPrincipal = descricaoPrincipal.substring(0, tribAproxIndex).trim();
+                }
+                
+                let competenciaFormatada = nota.competencia;
+                if (competenciaFormatada && competenciaFormatada.includes('/')) {
+                    const parts = competenciaFormatada.split(' ')[0].split('/');
+                    if(parts.length === 3) competenciaFormatada = `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+                } else if (competenciaFormatada) {
+                    competenciaFormatada = competenciaFormatada.split('T')[0];
+                }
+                
+                // Cálculo do Valor Líquido = Serviço - Retenções
+                let valorLiquido = (nota.valorServico || 0) - (nota.valorIr || 0) - (nota.valorPis || 0) - (nota.valorCofins || 0) - (nota.valorCsll || 0) - (nota.valorInss || 0) - (nota.valorIssRetido || 0) - (nota.valorDeducao || 0);
+
+                return `<CompNfse xmlns="http://www.abrasf.org.br/nfse.xsd">
     <Nfse versao="2.01">
         <InfNfse>
             <Numero>${nota.numero}</Numero>
@@ -988,15 +1190,15 @@
             <DataEmissao>${convertToAbrasfDate(nota.dataEmissao)}</DataEmissao>
             ${outrasInfo ? `<OutrasInformacoes>${escapeXML(outrasInfo)}</OutrasInformacoes>` : ''}
             <ValoresNfse>
-                <BaseCalculo>${nota.valorServico.toFixed(2)}</BaseCalculo>
-                <Aliquota>${nota.aliquota}</Aliquota>
-                <ValorIss>${nota.valorIss.toFixed(2)}</ValorIss>
-                <ValorLiquidoNfse>${valorLiquido.toFixed(2)}</ValorLiquidoNfse>
+                <BaseCalculo>${safeToFixed(nota.valorServico)}</BaseCalculo>
+                <Aliquota>${safeToFixed(nota.aliquota)}</Aliquota>
+                <ValorIss>${safeToFixed(nota.valorIss)}</ValorIss>
+                <ValorLiquidoNfse>${safeToFixed(valorLiquido)}</ValorLiquidoNfse>
             </ValoresNfse>
             <PrestadorServico>
                 <IdentificacaoPrestador>
                     <CpfCnpj><Cnpj>${config.cnpjPrestador}</Cnpj></CpfCnpj>
-                    <InscricaoMunicipal>${config.inscricaoMunicipalPrestador}</InscricaoMunicipal>
+                    <InscricaoMunicipal>${nota.prestadorIM || config.inscricaoMunicipalPrestador}</InscricaoMunicipal>
                 </IdentificacaoPrestador>
                 <RazaoSocial>${escapeXML(config.razaoSocialPrestador)}</RazaoSocial>
                 <Endereco>
@@ -1013,16 +1215,16 @@
                     <Competencia>${competenciaFormatada}</Competencia>
                     <Servico>
                         <Valores>
-                            <ValorServicos>${nota.valorServico.toFixed(2)}</ValorServicos>
-                            <ValorDeducoes>${nota.valorDeducao.toFixed(2)}</ValorDeducoes>
-                            <ValorPis>${nota.valorPis.toFixed(2)}</ValorPis>
-                            <ValorCofins>${nota.valorCofins.toFixed(2)}</ValorCofins>
-                            <ValorInss>${nota.valorInss.toFixed(2)}</ValorInss>
-                            <ValorIr>${nota.valorIr.toFixed(2)}</ValorIr>
-                            <ValorCsll>${nota.valorCsll.toFixed(2)}</ValorCsll>
+                            <ValorServicos>${safeToFixed(nota.valorServico)}</ValorServicos>
+                            <ValorDeducoes>${safeToFixed(nota.valorDeducao)}</ValorDeducoes>
+                            <ValorPis>${safeToFixed(nota.valorPis)}</ValorPis>
+                            <ValorCofins>${safeToFixed(nota.valorCofins)}</ValorCofins>
+                            <ValorInss>${safeToFixed(nota.valorInss)}</ValorInss>
+                            <ValorIr>${safeToFixed(nota.valorIr)}</ValorIr>
+                            <ValorCsll>${safeToFixed(nota.valorCsll)}</ValorCsll>
                             <OutrasRetencoes>0.00</OutrasRetencoes>
-                            <ValorIss>${nota.valorIss.toFixed(2)}</ValorIss>
-                            <Aliquota>${nota.aliquota}</Aliquota>
+                            <ValorIss>${safeToFixed(nota.valorIss)}</ValorIss>
+                            <Aliquota>${safeToFixed(nota.aliquota)}</Aliquota>
                             <DescontoIncondicionado>0.00</DescontoIncondicionado>
                             <DescontoCondicionado>0.00</DescontoCondicionado>
                         </Valores>
@@ -1057,6 +1259,10 @@
         </InfNfse>
     </Nfse>
 </CompNfse>`;
+            } catch (e) {
+                console.error("Erro ao gerar XML da nota:", nota, e);
+                return "";
+            }
         }
         
         function gerarXML_PedidoCancelamento(nota, config) {
