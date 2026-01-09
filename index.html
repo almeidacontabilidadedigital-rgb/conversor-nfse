@@ -947,20 +947,49 @@
                 if (!str) return 0;
                 const clean = str.trim();
                 if (!clean) return 0;
-                // Remove pontos de milhar e troca vírgula decimal por ponto
                 const normalized = clean.replace(/\./g, '').replace(',', '.');
                 return parseFloat(normalized) || 0;
             };
 
             const isTabSeparated = fileText.indexOf('\t') !== -1;
+            
+            // --- Lógica de Mapeamento Dinâmico (Header) ---
+            let colMap = {}; // Armazena 'Nome da Coluna' => Índice
+            let hasHeader = false;
+            let headerLength = 0;
+            let repasseIndex = -1;
 
-            if (isTabSeparated) {
-                 log(`Detectado formato TXT Tabulado (Exportação padrão SP).`, 'info');
-            } else {
-                 log(`Detectado formato TXT Posiicional (Layout antigo/CNAB).`, 'info');
+            // Analisa a primeira linha para ver se é cabeçalho
+            if (linhas.length > 0) {
+                const primeiraLinha = linhas[0].trim();
+                // Verifica palavras-chave comuns no cabeçalho de SP
+                if (primeiraLinha.includes("Nº NFS-e") || primeiraLinha.includes("Valor dos Serviços") || primeiraLinha.includes("Tipo de Registro")) {
+                    hasHeader = true;
+                    const headers = primeiraLinha.split('\t');
+                    headerLength = headers.length;
+                    headers.forEach((header, index) => {
+                        // Normaliza o nome do header para evitar erros de encoding ou espaços extras
+                        // Ex: "  PIS/PASEP  " vira "PIS/PASEP"
+                        const key = header.trim(); 
+                        colMap[key] = index;
+                        
+                        // Detecta o índice da coluna problemática "Repasse do Plano de Saúde"
+                        if (key.includes("Repasse do Plano de Saúde")) {
+                            repasseIndex = index;
+                        }
+                    });
+                    log(`Cabeçalho detectado (${headerLength} colunas). Utilizando mapeamento dinâmico.`, 'success');
+                } else {
+                    log(`Arquivo sem cabeçalho explícito. Tentando mapeamento posicional padrão.`, 'info');
+                }
             }
 
-            for (const linha of linhas) {
+            for (let i = 0; i < linhas.length; i++) {
+                const linha = linhas[i];
+                
+                // Pula a linha do cabeçalho se ela foi detectada
+                if (hasHeader && i === 0) continue;
+
                 // Filtra linhas que começam com '2' (Registro de NF-e)
                 if (!linha.startsWith('2')) continue;
 
@@ -979,114 +1008,112 @@
 
                     if (isTabSeparated) {
                         const cols = linha.split('\t');
-                        // Mapeamento baseado no cabeçalho fornecido e amostra
-                        // 0: Tipo (2)
-                        // 1: Numero
-                        numero = cols[1].trim();
                         
-                        // 2: Data Hora (01/12/2025 11:26:36)
-                        const dataRaw = cols[2].trim(); 
+                        // Detecção de Deslocamento (Ghost Column "Repasse")
+                        // Se o cabeçalho tem "Repasse" mas a linha atual tem 1 coluna a menos,
+                        // assumimos que a coluna "Repasse" foi omitida nos dados e ajustamos o índice.
+                        let shift = 0;
+                        if (hasHeader && repasseIndex !== -1 && cols.length === headerLength - 1) {
+                             shift = 1;
+                        }
+
+                        // Função auxiliar para buscar valor pela coluna (Nome) ou Índice (Fallback)
+                        const getVal = (colNames, fallbackIndex) => {
+                            if (hasHeader) {
+                                // Aceita uma string ou array de strings (para variações de nome)
+                                const names = Array.isArray(colNames) ? colNames : [colNames];
+                                for (const name of names) {
+                                    if (colMap.hasOwnProperty(name)) {
+                                        let idx = colMap[name];
+                                        
+                                        // Aplica a correção de deslocamento se estivermos lendo colunas APÓS a coluna problemática (Repasse)
+                                        if (shift > 0 && idx > repasseIndex) {
+                                            idx = idx - shift;
+                                        }
+                                        
+                                        return cols[idx];
+                                    }
+                                }
+                            }
+                            // Se não tiver cabeçalho ou a coluna não for encontrada no mapa, usa o índice fixo
+                            return cols[fallbackIndex];
+                        };
+                        
+                        // Mapeamento Dinâmico ou Fallback (índices baseados no layout padrão SP)
+                        
+                        numero = getVal(['Nº NFS-e', 'Numero'], 1)?.trim();
+                        
+                        const dataRaw = getVal(['Data Hora NFE', 'Data Emissão'], 2)?.trim(); 
                         if (dataRaw) {
-                            // Pega apenas a data DD/MM/AAAA
                             const datePart = dataRaw.split(' ')[0]; 
                             const [d, m, y] = datePart.split('/');
                             dataEmissao = `${y}-${m}-${d}`;
                         }
 
-                        // 3: Código de Verificação
-                        codigoVerificacao = cols[3].trim();
-
-                        // 8: IM Prestador
-                        prestadorIMArquivo = cols[8].trim();
+                        codigoVerificacao = getVal(['Código de Verificação da NFS-e', 'Codigo Verificacao'], 3)?.trim();
+                        prestadorIMArquivo = getVal(['Inscrição Municipal do Prestador', 'IM Prestador'], 8)?.trim();
                         
-                        // Dados do Prestador (para casos de serviços tomados)
-                        // 10: CPF/CNPJ Prestador
-                        const prestadorDocRaw = cols[10]?.trim().replace(/\D/g, '');
+                        const prestadorDocRaw = getVal(['CPF/CNPJ do Prestador', 'CNPJ Prestador'], 10)?.trim().replace(/\D/g, '');
                         if (prestadorDocRaw) prestadorCnpj = prestadorDocRaw;
                         
-                        // 11: Razão Social Prestador
-                        const prestadorRazaoRaw = cols[11]?.trim();
+                        const prestadorRazaoRaw = getVal(['Razão Social do Prestador', 'Razão Social Prestador'], 11)?.trim();
                         if (prestadorRazaoRaw) prestadorRazao = prestadorRazaoRaw;
                         
-                        // Endereço Prestador (Colunas 12-19)
-                        // Para simplificar, vamos pegar apenas Cidade (17) e UF (18) para calcular o código IBGE correto
-                        const prestadorCidade = cols[17]?.trim();
-                        const prestadorUFArquivo = cols[18]?.trim();
+                        // Busca endereço do prestador para definir local
+                        const prestadorCidade = getVal(['Cidade do Prestador', 'Cidade Prestador'], 17)?.trim();
+                        const prestadorUFArquivo = getVal(['UF do Prestador', 'UF Prestador'], 18)?.trim();
                         
                         if (prestadorUFArquivo) prestadorUF = prestadorUFArquivo;
                         if (prestadorCidade && prestadorUFArquivo) {
                             prestadorCodMun = findIBGECode(prestadorCidade, prestadorUFArquivo);
                         }
 
-                        // 23: Data de Cancelamento (se houver, é cancelada)
-                        if (cols[23] && cols[23].trim().length > 0) {
+                        const dataCancelamento = getVal(['Data de Cancelamento'], 23);
+                        if (dataCancelamento && dataCancelamento.trim().length > 0) {
                             situacao = 'CANCELADA';
                         }
 
-                        // 26: Valor Serviços
-                        valorServico = parseTxtValue(cols[26]);
-                        // 27: Valor Deduções
-                        valorDeducao = parseTxtValue(cols[27]);
-                        // 28: Código Serviço
-                        codServicoSP = cols[28].trim();
-                        // 29: Alíquota
-                        aliquota = parseTxtValue(cols[29]);
-                        // 30: ISS Devido
-                        valorIss = parseTxtValue(cols[30]);
-                        // 32: ISS Retido (S/N) -> N=2, S=1
-                        issRetidoRaw = cols[32].trim().toUpperCase(); 
+                        valorServico = parseTxtValue(getVal(['Valor dos Serviços', 'Valor Servico'], 26));
+                        valorDeducao = parseTxtValue(getVal(['Valor das Deduções', 'Valor Deducoes'], 27));
+                        codServicoSP = getVal(['Código do Serviço Prestado na Nota Fiscal', 'Codigo Servico'], 28)?.trim();
+                        aliquota = parseTxtValue(getVal(['Alíquota', 'Aliquota'], 29));
+                        valorIss = parseTxtValue(getVal(['ISS devido'], 30));
+                        
+                        issRetidoRaw = getVal(['ISS Retido'], 32)?.trim().toUpperCase(); 
                         issRetido = issRetidoRaw === 'S' ? '1' : '2';
                         valorIssRetido = issRetido === '1' ? valorIss : 0;
 
                         // Tomador
-                        // 34: CPF/CNPJ (Limpeza de caracteres não numéricos para validação correta)
-                        tomadorDoc = cols[34].trim().replace(/\D/g, '');
-                        // 35: Inscrição Municipal Tomador
-                        tomadorIM = cols[35].trim();
-                        // 37: Razão Social
-                        tomadorRazao = cols[37].trim() || 'TOMADOR DIVERSOS';
+                        tomadorDoc = getVal(['CPF/CNPJ do Tomador', 'CNPJ Tomador'], 34)?.trim().replace(/\D/g, '');
+                        tomadorIM = getVal(['Inscrição Municipal do Tomador'], 35)?.trim();
+                        tomadorRazao = getVal(['Razão Social do Tomador'], 37)?.trim() || 'TOMADOR DIVERSOS';
                         
-                        // Endereço Tomador
-                        // 39: Endereço (Logradouro)
-                        tomadorEnd = cols[39].trim();
-                        // 40: Numero
-                        tomadorNum = cols[40].trim();
-                        // 41: Complemento
-                        tomadorComp = cols[41].trim();
-                        // 42: Bairro
-                        tomadorBairro = cols[42].trim();
-                        // 43: Cidade
-                        tomadorCidade = cols[43].trim();
-                        // 44: UF
-                        tomadorUF = cols[44].trim();
-                        // 45: CEP
-                        tomadorCEP = cols[45].trim();
-                        // 46: Email
-                        tomadorEmail = cols[46].trim();
+                        tomadorEnd = getVal(['Endereço do Tomador'], 39)?.trim();
+                        tomadorNum = getVal(['Número do Endereço do Tomador'], 40)?.trim();
+                        tomadorComp = getVal(['Complemento do Endereço do Tomador'], 41)?.trim();
+                        tomadorBairro = getVal(['Bairro do Tomador'], 42)?.trim();
+                        tomadorCidade = getVal(['Cidade do Tomador'], 43)?.trim();
+                        tomadorUF = getVal(['UF do Tomador'], 44)?.trim();
+                        tomadorCEP = getVal(['CEP do Tomador'], 45)?.trim();
+                        tomadorEmail = getVal(['Email do Tomador'], 46)?.trim();
 
-                        // Retenções Federais (Indices ajustados conforme cabeçalho e amostra)
-                        // 55: PIS/PASEP
-                        valorPis = parseTxtValue(cols[55]);
-                        // 56: COFINS
-                        valorCofins = parseTxtValue(cols[56]);
-                        // 57: INSS
-                        valorInss = parseTxtValue(cols[57]);
-                        // 58: IR
-                        valorIr = parseTxtValue(cols[58]);
-                        // 59: CSLL
-                        valorCsll = parseTxtValue(cols[59]);
+                        // Retenções Federais - O PULO DO GATO
+                        // Se "Repasse do Plano de Saúde" existir ou não, não importa, ele vai achar "PIS/PASEP" onde estiver.
+                        // Os índices de fallback (54, 55...) são mantidos para arquivos SEM cabeçalho.
+                        
+                        valorPis = parseTxtValue(getVal(['PIS/PASEP', 'PIS'], 54));
+                        valorCofins = parseTxtValue(getVal(['COFINS'], 55));
+                        valorInss = parseTxtValue(getVal(['INSS'], 56));
+                        valorIr = parseTxtValue(getVal(['IR'], 57));
+                        valorCsll = parseTxtValue(getVal(['CSLL'], 58));
 
-                        // Ultima coluna: Discriminação 
-                        discriminacao = cols[cols.length - 1].trim();
-                        if (!discriminacao && cols.length > 80) {
-                             // Fallback se a última for vazia
-                             discriminacao = cols[cols.length - 2]?.trim() || '';
-                        }
+                        // Discriminação
+                        discriminacao = getVal(['Discriminação dos Serviços', 'Discriminacao'], cols.length - 1)?.trim();
 
                     } else {
-                        // Lógica Posicional Antiga (Mantida como fallback para arquivos legados, assume-se prestador como usuário)
+                        // Lógica Posicional Antiga (Mantida apenas para layout posicional estrito sem tabs)
                         numero = linha.substring(1, 9).trim();
-                        const dataRaw = linha.substring(9, 17).trim(); // AAAAMMDD
+                        const dataRaw = linha.substring(9, 17).trim(); 
                         if (dataRaw.length === 8) {
                             dataEmissao = `${dataRaw.substring(0,4)}-${dataRaw.substring(4,6)}-${dataRaw.substring(6,8)}`;
                         }
@@ -1103,7 +1130,6 @@
                         discriminacao = linha.substring(165).trim();
                     }
 
-                    // Tenta encontrar o código ABRASF para o serviço (com padStart para garantir 5 digitos se necessário, mas o mapa já tem strings)
                     const itemLista = mapaServicos[codServicoSP] || mapaServicos[codServicoSP.padStart(5, '0')] || codServicoSP;
                     const tomadorCodMun = findIBGECode(tomadorCidade, tomadorUF);
 
@@ -1131,7 +1157,7 @@
                         codMunPrestacao: config.codMunEmpresa,
                         prestacaoLocal: `${config.municipioEmpresa} - ${config.ufEmpresa}`,
                         exigibilidadeISS: '1',
-                        optanteSimples: '2', // Assumido 2 por padrão se não mapeado explicitamente
+                        optanteSimples: '2', 
                         prestadorCnpj: prestadorCnpj,
                         prestadorIM: prestadorIMArquivo || config.inscricaoMunicipalPrestador,
                         prestadorRazao: prestadorRazao,
