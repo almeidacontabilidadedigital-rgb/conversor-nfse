@@ -968,7 +968,7 @@
                     let numero, dataEmissao, tomadorDoc, valorServico, valorDeducao, codServicoSP, aliquota, valorIss, issRetidoRaw, issRetido, valorIssRetido, discriminacao, prestadorIMArquivo;
                     let prestadorRazao = config.razaoSocialPrestador;
                     let tomadorRazao = 'TOMADOR DIVERSOS';
-                    let tomadorEnd = '', tomadorNum = '', tomadorComp = '', tomadorBairro = '', tomadorCidade = '', tomadorUF = '', tomadorCEP = '', tomadorEmail = '';
+                    let tomadorEnd = '', tomadorNum = '', tomadorComp = '', tomadorBairro = '', tomadorCidade = '', tomadorUF = '', tomadorCEP = '', tomadorEmail = '', tomadorIM = '';
                     let situacao = 'NORMAL';
                     let valorPis = 0, valorCofins = 0, valorInss = 0, valorIr = 0, valorCsll = 0;
                     let codigoVerificacao = '';
@@ -1016,8 +1016,10 @@
                         valorIssRetido = issRetido === '1' ? valorIss : 0;
 
                         // Tomador
-                        // 34: CPF/CNPJ
-                        tomadorDoc = cols[34].trim();
+                        // 34: CPF/CNPJ (Limpeza de caracteres não numéricos para validação correta)
+                        tomadorDoc = cols[34].trim().replace(/\D/g, '');
+                        // 35: Inscrição Municipal Tomador
+                        tomadorIM = cols[35].trim();
                         // 37: Razão Social
                         tomadorRazao = cols[37].trim() || 'TOMADOR DIVERSOS';
                         
@@ -1113,6 +1115,7 @@
                         prestadorCodMun: config.codMunEmpresa,
                         prestadorUF: config.ufPrestador,
                         tomadorDoc: tomadorDoc,
+                        tomadorIM: tomadorIM,
                         tomadorRazao: tomadorRazao,
                         tomadorEnd: tomadorEnd,
                         tomadorNum: tomadorNum,
@@ -1239,6 +1242,7 @@
                         <IdentificacaoTomador>
                             ${nota.tomadorDoc && nota.tomadorDoc.length === 11 ? `<CpfCnpj><Cpf>${nota.tomadorDoc}</Cpf></CpfCnpj>` : ''}
                             ${nota.tomadorDoc && nota.tomadorDoc.length === 14 ? `<CpfCnpj><Cnpj>${nota.tomadorDoc}</Cnpj></CpfCnpj>` : ''}
+                            ${nota.tomadorIM ? `<InscricaoMunicipal>${nota.tomadorIM}</InscricaoMunicipal>` : ''}
                         </IdentificacaoTomador>
                         <RazaoSocial>${escapeXML(nota.tomadorRazao)}</RazaoSocial>
                         <Endereco>
