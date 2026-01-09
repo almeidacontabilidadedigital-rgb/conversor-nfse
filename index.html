@@ -967,6 +967,10 @@
                 try {
                     let numero, dataEmissao, tomadorDoc, valorServico, valorDeducao, codServicoSP, aliquota, valorIss, issRetidoRaw, issRetido, valorIssRetido, discriminacao, prestadorIMArquivo;
                     let prestadorRazao = config.razaoSocialPrestador;
+                    let prestadorCnpj = config.cnpjPrestador;
+                    let prestadorUF = config.ufPrestador;
+                    let prestadorCodMun = config.codMunEmpresa;
+                    
                     let tomadorRazao = 'TOMADOR DIVERSOS';
                     let tomadorEnd = '', tomadorNum = '', tomadorComp = '', tomadorBairro = '', tomadorCidade = '', tomadorUF = '', tomadorCEP = '', tomadorEmail = '', tomadorIM = '';
                     let situacao = 'NORMAL';
@@ -994,6 +998,25 @@
 
                         // 8: IM Prestador
                         prestadorIMArquivo = cols[8].trim();
+                        
+                        // Dados do Prestador (para casos de serviços tomados)
+                        // 10: CPF/CNPJ Prestador
+                        const prestadorDocRaw = cols[10]?.trim().replace(/\D/g, '');
+                        if (prestadorDocRaw) prestadorCnpj = prestadorDocRaw;
+                        
+                        // 11: Razão Social Prestador
+                        const prestadorRazaoRaw = cols[11]?.trim();
+                        if (prestadorRazaoRaw) prestadorRazao = prestadorRazaoRaw;
+                        
+                        // Endereço Prestador (Colunas 12-19)
+                        // Para simplificar, vamos pegar apenas Cidade (17) e UF (18) para calcular o código IBGE correto
+                        const prestadorCidade = cols[17]?.trim();
+                        const prestadorUFArquivo = cols[18]?.trim();
+                        
+                        if (prestadorUFArquivo) prestadorUF = prestadorUFArquivo;
+                        if (prestadorCidade && prestadorUFArquivo) {
+                            prestadorCodMun = findIBGECode(prestadorCidade, prestadorUFArquivo);
+                        }
 
                         // 23: Data de Cancelamento (se houver, é cancelada)
                         if (cols[23] && cols[23].trim().length > 0) {
@@ -1041,17 +1064,17 @@
                         // 46: Email
                         tomadorEmail = cols[46].trim();
 
-                        // Retenções Federais (conforme colunas do TXT Exportação SP)
-                        // 54: PIS/PASEP
-                        valorPis = parseTxtValue(cols[54]);
-                        // 55: COFINS
-                        valorCofins = parseTxtValue(cols[55]);
-                        // 56: INSS
-                        valorInss = parseTxtValue(cols[56]);
-                        // 57: IR
-                        valorIr = parseTxtValue(cols[57]);
-                        // 58: CSLL
-                        valorCsll = parseTxtValue(cols[58]);
+                        // Retenções Federais (Indices ajustados conforme cabeçalho e amostra)
+                        // 55: PIS/PASEP
+                        valorPis = parseTxtValue(cols[55]);
+                        // 56: COFINS
+                        valorCofins = parseTxtValue(cols[56]);
+                        // 57: INSS
+                        valorInss = parseTxtValue(cols[57]);
+                        // 58: IR
+                        valorIr = parseTxtValue(cols[58]);
+                        // 59: CSLL
+                        valorCsll = parseTxtValue(cols[59]);
 
                         // Ultima coluna: Discriminação 
                         discriminacao = cols[cols.length - 1].trim();
@@ -1061,7 +1084,7 @@
                         }
 
                     } else {
-                        // Lógica Posicional Antiga (Mantida como fallback)
+                        // Lógica Posicional Antiga (Mantida como fallback para arquivos legados, assume-se prestador como usuário)
                         numero = linha.substring(1, 9).trim();
                         const dataRaw = linha.substring(9, 17).trim(); // AAAAMMDD
                         if (dataRaw.length === 8) {
@@ -1109,11 +1132,11 @@
                         prestacaoLocal: `${config.municipioEmpresa} - ${config.ufEmpresa}`,
                         exigibilidadeISS: '1',
                         optanteSimples: '2', // Assumido 2 por padrão se não mapeado explicitamente
-                        prestadorCnpj: config.cnpjPrestador,
+                        prestadorCnpj: prestadorCnpj,
                         prestadorIM: prestadorIMArquivo || config.inscricaoMunicipalPrestador,
-                        prestadorRazao: config.razaoSocialPrestador,
-                        prestadorCodMun: config.codMunEmpresa,
-                        prestadorUF: config.ufPrestador,
+                        prestadorRazao: prestadorRazao,
+                        prestadorCodMun: prestadorCodMun,
+                        prestadorUF: prestadorUF,
                         tomadorDoc: tomadorDoc,
                         tomadorIM: tomadorIM,
                         tomadorRazao: tomadorRazao,
@@ -1185,6 +1208,13 @@
                 // Cálculo do Valor Líquido = Serviço - Retenções
                 let valorLiquido = (nota.valorServico || 0) - (nota.valorIr || 0) - (nota.valorPis || 0) - (nota.valorCofins || 0) - (nota.valorCsll || 0) - (nota.valorInss || 0) - (nota.valorIssRetido || 0) - (nota.valorDeducao || 0);
 
+                // Determina os dados do prestador: usa os dados da nota se existirem, senão usa config (fallback)
+                const pCnpj = nota.prestadorCnpj || config.cnpjPrestador;
+                const pIM = nota.prestadorIM || config.inscricaoMunicipalPrestador;
+                const pRazao = nota.prestadorRazao || config.razaoSocialPrestador;
+                const pCodMun = nota.prestadorCodMun || config.codMunEmpresa;
+                const pUF = nota.prestadorUF || config.ufPrestador;
+
                 return `<CompNfse xmlns="http://www.abrasf.org.br/nfse.xsd">
     <Nfse versao="2.01">
         <InfNfse>
@@ -1200,13 +1230,13 @@
             </ValoresNfse>
             <PrestadorServico>
                 <IdentificacaoPrestador>
-                    <CpfCnpj><Cnpj>${config.cnpjPrestador}</Cnpj></CpfCnpj>
-                    <InscricaoMunicipal>${nota.prestadorIM || config.inscricaoMunicipalPrestador}</InscricaoMunicipal>
+                    <CpfCnpj><Cnpj>${pCnpj}</Cnpj></CpfCnpj>
+                    <InscricaoMunicipal>${pIM}</InscricaoMunicipal>
                 </IdentificacaoPrestador>
-                <RazaoSocial>${escapeXML(config.razaoSocialPrestador)}</RazaoSocial>
+                <RazaoSocial>${escapeXML(pRazao)}</RazaoSocial>
                 <Endereco>
-                    <CodigoMunicipio>${config.codMunEmpresa}</CodigoMunicipio>
-                    <Uf>${config.ufPrestador}</Uf>
+                    <CodigoMunicipio>${pCodMun}</CodigoMunicipio>
+                    <Uf>${pUF}</Uf>
                 </Endereco>
             </PrestadorServico>
             <OrgaoGerador>
