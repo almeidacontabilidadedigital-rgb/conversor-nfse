@@ -54,6 +54,7 @@
             background-color: #eff6ff;
         }
     </style>
+<link rel="stylesheet" href="/index.css">
 </head>
 <body class="bg-gray-100 font-sans">
 
@@ -398,7 +399,19 @@
             reader.readAsText(file, encoding);
         });
         
+        const getNS = (parent, localName) => {
+            if (!parent) return null;
+            const elements = parent.getElementsByTagNameNS('*', localName);
+            return elements.length > 0 ? elements[0] : null;
+        };
+
+        const getTextNS = (parent, localName, def = "") => {
+            const node = getNS(parent, localName);
+            return node ? node.textContent.trim() : def;
+        };
+
         const getNodeText = (parentNode, selector, defaultValue = "") => {
+            if (!parentNode) return defaultValue;
             const node = parentNode.querySelector(selector);
             return node ? node.textContent.trim() : defaultValue;
         }
@@ -716,78 +729,111 @@
         // --- Funções de Parsing para um Objeto Canônico ---
 
         function mapearXmlParaPadronizado(doc, config) {
-            if (doc.querySelector('CompNfse > Nfse > InfNfse')) {
-                log(`Processando XML (padrão NFS-e ABRASF)`, 'info');
-                return [mapearCompNfse(doc.querySelector('InfNfse'), config)];
-            } 
-            if (doc.querySelector('nfe > NotaFiscal')) {
-                log(`Processando XML (padrão Artur Nogueira-SP)`, 'info');
-                return Array.from(doc.querySelectorAll('nfe > NotaFiscal')).map(node => mapearArturNogueira(node, config)).filter(Boolean);
+            // 1. ABRASF (Multiple notes via InfNfse or CompNfse)
+            const infNfseNodes = doc.getElementsByTagNameNS('*', 'InfNfse');
+            if (infNfseNodes.length > 0) {
+                log(`Processando XML (padrão ABRASF - ${infNfseNodes.length} notas)`, 'info');
+                return Array.from(infNfseNodes).map(node => mapearCompNfse(node, config)).filter(Boolean);
             }
-            if (doc.querySelector('NOTA_FISCAL')) { // Campo Grande-MS
-                 log(`Processando XML (padrão Campo Grande-MS)`, 'info');
-                return [mapearCampoGrande(doc.querySelector('NOTA_FISCAL'), config)];
+
+            // 2. GINFES / Generic (Multiple notes via Nfse)
+            const nfseNodes = doc.getElementsByTagNameNS('*', 'Nfse');
+            if (nfseNodes.length > 0 && doc.getElementsByTagNameNS('*', 'IdentificacaoNfse').length > 0) {
+                log(`Processando XML (padrão GINFES/Nfse - ${nfseNodes.length} notas)`, 'info');
+                return Array.from(nfseNodes).map(node => mapearGinfes(node, config)).filter(Boolean);
             }
+
+            // 3. Artur Nogueira-SP
+            const arturNodes = doc.querySelectorAll('NotaFiscal');
+            if (arturNodes.length > 0 && doc.querySelector('nfe')) {
+                log(`Processando XML (padrão Artur Nogueira-SP - ${arturNodes.length} notas)`, 'info');
+                return Array.from(arturNodes).map(node => mapearArturNogueira(node, config)).filter(Boolean);
+            }
+
+            // 4. Campo Grande-MS
+            const cgNodes = doc.querySelectorAll('NOTA_FISCAL');
+            if (cgNodes.length > 0) {
+                log(`Processando XML (padrão Campo Grande-MS - ${cgNodes.length} notas)`, 'info');
+                return Array.from(cgNodes).map(node => mapearCampoGrande(node, config)).filter(Boolean);
+            }
+
+            // 5. IPM
+            const ipmNodes = doc.querySelectorAll('nfse');
+            if (ipmNodes.length > 0 && doc.querySelector('nfse > nf')) {
+                log(`Processando XML (padrão IPM - ${ipmNodes.length} notas)`, 'info');
+                return Array.from(ipmNodes).map(node => mapearIPM(node, config)).filter(Boolean);
+            }
+
             throw new Error("Formato de XML não suportado ou não reconhecido.");
         }
 
         function mapearCompNfse(infNfse, config) {
-            const declaracao = infNfse.parentElement.querySelector('DeclaracaoPrestacaoServico > InfDeclaracaoPrestacaoServico');
-            if (!declaracao) return null;
+            // Tenta encontrar a declaração (pode estar no pai CompNfse ou no próprio InfNfse em algumas versões)
+            const parent = infNfse.parentElement;
+            const declaracao = getNS(parent, 'InfDeclaracaoPrestacaoServico') || getNS(infNfse, 'InfDeclaracaoPrestacaoServico') || getNS(parent, 'DeclaracaoPrestacaoServico') || getNS(infNfse, 'DeclaracaoPrestacaoServico');
+            
+            if (!declaracao) {
+                // Se não achou declaração, tenta mapear o que tem no InfNfse (alguns XMLs simplificados)
+                // Mas geralmente ABRASF precisa da declaração para os valores e tomador
+                log(`Aviso: Declaração não encontrada para nota ${getTextNS(infNfse, 'Numero')}`, 'info');
+            }
 
-            const prestadorNode = infNfse.querySelector('PrestadorServico');
-            const tomadorNode = declaracao.querySelector('Tomador');
-            const servicoNode = declaracao.querySelector('Servico');
-            const valoresServicoNode = servicoNode.querySelector('Valores');
-            const tomadorCpfCnpj = tomadorNode.querySelector('IdentificacaoTomador > CpfCnpj');
-            const tomadorEnd = tomadorNode.querySelector('Endereco');
-            const prestadorEnd = prestadorNode.querySelector('Endereco');
+            const prestadorNode = getNS(infNfse, 'PrestadorServico') || getNS(declaracao, 'Prestador');
+            const tomadorNode = getNS(declaracao, 'TomadorServico') || getNS(declaracao, 'Tomador');
+            const servicoNode = getNS(declaracao, 'Servico');
+            const valoresServicoNode = getNS(servicoNode, 'Valores');
+            const tomadorCpfCnpj = getNS(tomadorNode, 'CpfCnpj') || getNS(getNS(tomadorNode, 'IdentificacaoTomador'), 'CpfCnpj');
+            const tomadorEnd = getNS(tomadorNode, 'Endereco');
+            const prestadorEnd = getNS(prestadorNode, 'Endereco');
 
-            // Ajuste na leitura da alíquota para suportar decimal (0.025) e percentual (2.5)
-            // Se for < 1 (ex: 0.025), multiplica por 100. Se for > 1 (ex: 2.5), mantém.
-            const rawAliquota = safeParseFloat(getNodeText(valoresServicoNode, 'Aliquota'));
+            const rawAliquota = safeParseFloat(getTextNS(valoresServicoNode, 'Aliquota'));
             const aliquota = (rawAliquota > 0 && rawAliquota < 1) ? rawAliquota * 100 : rawAliquota;
 
             return {
-                numero: getNodeText(infNfse, 'Numero'),
-                codigoVerificacao: getNodeText(infNfse, 'CodigoVerificacao'),
-                dataEmissao: getNodeText(infNfse, 'DataEmissao').split('T')[0],
-                competencia: getNodeText(declaracao, 'Competencia'),
-                discriminacao: getNodeText(servicoNode, 'Discriminacao'),
+                numero: getTextNS(infNfse, 'Numero'),
+                codigoVerificacao: getTextNS(infNfse, 'CodigoVerificacao'),
+                dataEmissao: getTextNS(infNfse, 'DataEmissao').split('T')[0],
+                competencia: getTextNS(declaracao || infNfse, 'Competencia'),
+                discriminacao: getTextNS(servicoNode, 'Discriminacao'),
                 situacao: 'NORMAL',
-                valorServico: safeParseFloat(getNodeText(valoresServicoNode, 'ValorServicos')),
-                valorDeducao: safeParseFloat(getNodeText(valoresServicoNode, 'ValorDeducoes')),
-                valorPis: safeParseFloat(getNodeText(valoresServicoNode, 'ValorPis')),
-                valorCofins: safeParseFloat(getNodeText(valoresServicoNode, 'ValorCofins')),
-                valorInss: safeParseFloat(getNodeText(valoresServicoNode, 'ValorInss')),
-                valorIr: safeParseFloat(getNodeText(valoresServicoNode, 'ValorIr')),
-                valorCsll: safeParseFloat(getNodeText(valoresServicoNode, 'ValorCsll')),
-                issRetido: getNodeText(valoresServicoNode, 'IssRetido', '2'),
-                valorIss: safeParseFloat(getNodeText(valoresServicoNode, 'ValorIss')),
-                valorIssRetido: safeParseFloat(getNodeText(valoresServicoNode, 'ValorIssRetido')),
+                valorServico: safeParseFloat(getTextNS(valoresServicoNode, 'ValorServicos')),
+                valorDeducao: safeParseFloat(getTextNS(valoresServicoNode, 'ValorDeducoes')),
+                valorPis: safeParseFloat(getTextNS(valoresServicoNode, 'ValorPis')),
+                valorCofins: safeParseFloat(getTextNS(valoresServicoNode, 'ValorCofins')),
+                valorInss: safeParseFloat(getTextNS(valoresServicoNode, 'ValorInss')),
+                valorIr: safeParseFloat(getTextNS(valoresServicoNode, 'ValorIr')),
+                valorCsll: safeParseFloat(getTextNS(valoresServicoNode, 'ValorCsll')),
+                issRetido: getTextNS(valoresServicoNode, 'IssRetido', '2'),
+                valorIss: safeParseFloat(getTextNS(valoresServicoNode, 'ValorIss')),
+                valorIssRetido: safeParseFloat(getTextNS(valoresServicoNode, 'ValorIssRetido')),
                 aliquota: aliquota,
-                itemLista: getNodeText(servicoNode, 'ItemListaServico'),
-                codigoTributacaoMunicipio: getNodeText(servicoNode, 'CodigoTributacaoMunicipio'),
-                codCnae: getNodeText(servicoNode, 'CodigoCnae'),
-                codMunPrestacao: getNodeText(servicoNode, 'MunicipioIncidencia'),
-                prestacaoLocal: `${reverseCodigosIBGE[getNodeText(servicoNode, 'MunicipioIncidencia')]?.cidade || ''} - ${reverseCodigosIBGE[getNodeText(servicoNode, 'MunicipioIncidencia')]?.uf || ''}`,
-                exigibilidadeISS: getNodeText(servicoNode, 'ExigibilidadeISS', '1'),
-                optanteSimples: getNodeText(declaracao, 'OptanteSimplesNacional', '2'),
-                prestadorCnpj: getNodeText(prestadorNode, 'IdentificacaoPrestador > CpfCnpj > Cnpj'),
-                prestadorIM: getNodeText(prestadorNode, 'IdentificacaoPrestador > InscricaoMunicipal'),
-                prestadorRazao: normalizeName(getNodeText(prestadorNode, 'RazaoSocial')),
-                prestadorCodMun: getNodeText(prestadorEnd, 'CodigoMunicipio'),
-                prestadorUF: getNodeText(prestadorEnd, 'Uf'),
-                tomadorDoc: getNodeText(tomadorCpfCnpj, 'Cnpj') || getNodeText(tomadorCpfCnpj, 'Cpf'),
-                tomadorRazao: normalizeName(getNodeText(tomadorNode, 'RazaoSocial')),
-                tomadorEnd: getNodeText(tomadorEnd, 'Endereco'),
-                tomadorNum: getNodeText(tomadorEnd, 'Numero'),
-                tomadorComp: getNodeText(tomadorEnd, 'Complemento'),
-                tomadorBairro: getNodeText(tomadorEnd, 'Bairro'),
-                tomadorCodMun: getNodeText(tomadorEnd, 'CodigoMunicipio'),
-                tomadorUF: getNodeText(tomadorEnd, 'Uf'),
-                tomadorCEP: getNodeText(tomadorEnd, 'Cep'),
-                tomadorEmail: getNodeText(tomadorNode, 'Contato > Email'),
+                itemLista: getTextNS(servicoNode, 'ItemListaServico'),
+                codigoTributacaoMunicipio: getTextNS(servicoNode, 'CodigoTributacaoMunicipio'),
+                codCnae: getTextNS(servicoNode, 'CodigoCnae'),
+                codMunPrestacao: getTextNS(servicoNode, 'MunicipioIncidencia') || getTextNS(servicoNode, 'MunicipioPrestacaoServico'),
+                prestacaoLocal: `${reverseCodigosIBGE[getTextNS(servicoNode, 'MunicipioIncidencia') || getTextNS(servicoNode, 'MunicipioPrestacaoServico')]?.cidade || ''} - ${reverseCodigosIBGE[getTextNS(servicoNode, 'MunicipioIncidencia') || getTextNS(servicoNode, 'MunicipioPrestacaoServico')]?.uf || ''}`,
+                exigibilidadeISS: getTextNS(servicoNode, 'ExigibilidadeISS', '1'),
+                optanteSimples: getTextNS(declaracao || infNfse, 'OptanteSimplesNacional', '2'),
+                prestadorCnpj: getTextNS(prestadorNode, 'Cnpj') || getTextNS(getNS(prestadorNode, 'IdentificacaoPrestador'), 'Cnpj'),
+                prestadorIM: getTextNS(prestadorNode, 'InscricaoMunicipal') || getTextNS(getNS(prestadorNode, 'IdentificacaoPrestador'), 'InscricaoMunicipal'),
+                prestadorRazao: normalizeName(getTextNS(prestadorNode, 'RazaoSocial')),
+                prestadorCodMun: getTextNS(prestadorEnd, 'CodigoMunicipio'),
+                prestadorUF: getTextNS(prestadorEnd, 'Uf'),
+                prestadorEnd: getTextNS(prestadorEnd, 'Endereco'),
+                prestadorNum: getTextNS(prestadorEnd, 'Numero'),
+                prestadorComp: getTextNS(prestadorEnd, 'Complemento'),
+                prestadorBairro: getTextNS(prestadorEnd, 'Bairro'),
+                prestadorCEP: getTextNS(prestadorEnd, 'Cep'),
+                tomadorDoc: getTextNS(tomadorCpfCnpj, 'Cnpj') || getTextNS(tomadorCpfCnpj, 'Cpf'),
+                tomadorRazao: normalizeName(getTextNS(tomadorNode, 'RazaoSocial')),
+                tomadorEnd: getTextNS(tomadorEnd, 'Endereco'),
+                tomadorNum: getTextNS(tomadorEnd, 'Numero'),
+                tomadorComp: getTextNS(tomadorEnd, 'Complemento'),
+                tomadorBairro: getTextNS(tomadorEnd, 'Bairro'),
+                tomadorCodMun: getTextNS(tomadorEnd, 'CodigoMunicipio'),
+                tomadorUF: getTextNS(tomadorEnd, 'Uf'),
+                tomadorCEP: getTextNS(tomadorEnd, 'Cep'),
+                tomadorEmail: getTextNS(getNS(tomadorNode, 'Contato'), 'Email') || getTextNS(tomadorNode, 'Email'),
             };
         }
 
@@ -874,6 +920,11 @@
                 prestadorRazao: normalizeName(getNodeText(notaNode, 'DadosPrestador > razaoSocial')),
                 prestadorCodMun: findIBGECode(getNodeText(notaNode, 'DadosPrestador > cidade'), prestadorUF),
                 prestadorUF: prestadorUF,
+                prestadorEnd: getNodeText(notaNode, 'DadosPrestador > logradouro'),
+                prestadorNum: getNodeText(notaNode, 'DadosPrestador > numero'),
+                prestadorComp: getNodeText(notaNode, 'DadosPrestador > complemento'),
+                prestadorBairro: getNodeText(notaNode, 'DadosPrestador > bairro'),
+                prestadorCEP: getNodeText(notaNode, 'DadosPrestador > cep').replace(/\D/g, ''),
                 tomadorDoc: tomadorDoc,
                 tomadorRazao: normalizeName(getNodeText(notaNode, 'DadosTomador > razaoSocial')),
                 tomadorEnd: getNodeText(notaNode, 'DadosTomador > logradouro'),
@@ -907,6 +958,11 @@
                 prestadorRazao: normalizeName(getNodeText(notaNode, "PRESTADOR_RAZAO_SOCIAL")),
                 prestadorCodMun: findIBGECode(getNodeText(notaNode, 'PRESTADOR_CIDADE'), getNodeText(notaNode, 'PRESTADOR_UF')),
                 prestadorUF: getNodeText(notaNode, 'PRESTADOR_UF'),
+                prestadorEnd: getNodeText(notaNode, 'PRESTADOR_LOGRADOURO'),
+                prestadorNum: getNodeText(notaNode, 'PRESTADOR_NUMERO'),
+                prestadorComp: getNodeText(notaNode, 'PRESTADOR_COMPLEMENTO'),
+                prestadorBairro: getNodeText(notaNode, 'PRESTADOR_BAIRRO'),
+                prestadorCEP: getNodeText(notaNode, 'PRESTADOR_CEP').replace(/\D/g, ''),
                 competencia: getNodeText(notaNode, "MES_COMPETENCIA"),
                 valorDeducao: safeParseFloat(getNodeText(notaNode, "VALOR_DEDUCAO", "0")),
                 valorPIS: safeParseFloat(getNodeText(notaNode, "VALOR_PIS")),
@@ -933,6 +989,172 @@
                 tomadorEmail: getNodeText(notaNode, "TOMADOR_EMAIL"),
                 optanteSimples: getNodeText(notaNode, "TRIBUTACAO_PRESTACAO") === "H" ? "1" : "2",
                 situacao: getNodeText(notaNode, 'SITUACAO_NF').toUpperCase(),
+            };
+        }
+
+        function mapearIPM(node, config) {
+            const nf = getNS(node, 'nf') || node.querySelector('nf');
+            const prestador = getNS(node, 'prestador') || node.querySelector('prestador');
+            const tomador = getNS(node, 'tomador') || node.querySelector('tomador');
+            const itens = getNS(node, 'itens') || node.querySelector('itens');
+            const lista = getNS(itens, 'lista') || itens?.querySelector('lista');
+
+            if (!nf) return null;
+
+            if (getNodeText(nf, 'situacao_codigo_nfse') === '2') {
+                log(`Ignorando Nota Fiscal nº ${getNodeText(nf, 'numero_nfse')} por estar cancelada.`, 'info');
+                return null;
+            }
+
+            const dataEmissaoParts = getNodeText(nf, 'data_nfse').split('/');
+            const dataEmissao = dataEmissaoParts.length === 3 ? `${dataEmissaoParts[2]}-${dataEmissaoParts[1]}-${dataEmissaoParts[0]}` : getNodeText(nf, 'data_nfse');
+
+            const aliquotaRaw = safeParseFloat(getNodeText(lista, 'aliquota_item_lista_servico'));
+            const aliquota = aliquotaRaw;
+
+            const tomadorDoc = getNodeText(tomador, 'cpfcnpj');
+            const prestadorDoc = getNodeText(prestador, 'cpfcnpj');
+            
+            const valorServico = safeParseFloat(getNodeText(nf, 'valor_total'));
+            const valorIssRetido = safeParseFloat(getNodeText(lista, 'valor_issrf'));
+            const issRetido = valorIssRetido > 0 ? '1' : '2';
+            
+            let valorIss = safeParseFloat(getNodeText(lista, 'valor_iss'));
+            if (!valorIss && valorIss !== 0) {
+                valorIss = (safeParseFloat(getNodeText(lista, 'valor_tributavel')) * aliquota) / 100;
+            }
+
+            return {
+                numero: getNodeText(nf, 'numero_nfse'),
+                codigoVerificacao: getNodeText(nf, 'cod_verificador_autenticidade'),
+                dataEmissao: dataEmissao,
+                competencia: dataEmissao,
+                discriminacao: getNodeText(lista, 'descritivo'),
+                situacao: getNodeText(nf, 'situacao_codigo_nfse') === '1' ? 'NORMAL' : 'CANCELADA',
+                valorServico: valorServico,
+                valorDeducao: safeParseFloat(getNodeText(nf, 'valor_desconto')) + safeParseFloat(getNodeText(lista, 'valor_deducao')),
+                valorPis: safeParseFloat(getNodeText(nf, 'valor_pis')),
+                valorCofins: safeParseFloat(getNodeText(nf, 'valor_cofins')),
+                valorInss: safeParseFloat(getNodeText(nf, 'valor_inss')),
+                valorIr: safeParseFloat(getNodeText(nf, 'valor_ir')),
+                valorCsll: safeParseFloat(getNodeText(nf, 'valor_contribuicao_social')),
+                issRetido: issRetido,
+                valorIss: valorIss,
+                valorIssRetido: valorIssRetido,
+                aliquota: aliquota,
+                itemLista: getNodeText(lista, 'codigo_item_lista_servico'),
+                codigoTributacaoMunicipio: getNodeText(lista, 'codigo_atividade'),
+                codCnae: '',
+                codMunPrestacao: getNodeText(lista, 'codigo_local_prestacao_servico'),
+                prestacaoLocal: '',
+                exigibilidadeISS: getNodeText(lista, 'tributa_municipio_prestador') === 'S' ? '1' : '2',
+                optanteSimples: '2',
+                prestadorCnpj: prestadorDoc || config.cnpjPrestador,
+                prestadorIM: config.inscricaoMunicipalPrestador,
+                prestadorRazao: config.razaoSocialPrestador,
+                prestadorCodMun: getNodeText(prestador, 'cidade') || config.codMunEmpresa,
+                prestadorUF: config.ufPrestador,
+                prestadorEnd: '',
+                prestadorNum: '',
+                prestadorComp: '',
+                prestadorBairro: '',
+                prestadorCEP: '',
+                tomadorDoc: tomadorDoc,
+                tomadorRazao: normalizeName(getNodeText(tomador, 'nome_razao_social') || getNodeText(tomador, 'sobrenome_nome_fantasia')),
+                tomadorEnd: getNodeText(tomador, 'logradouro'),
+                tomadorNum: getNodeText(tomador, 'numero_residencia'),
+                tomadorComp: getNodeText(tomador, 'complemento'),
+                tomadorBairro: getNodeText(tomador, 'bairro'),
+                tomadorCodMun: getNodeText(tomador, 'cidade'),
+                tomadorUF: getNodeText(tomador, 'estado'),
+                tomadorCEP: getNodeText(tomador, 'cep'),
+                tomadorEmail: getNodeText(tomador, 'email'),
+            };
+        }
+
+        function mapearGinfes(notaNode, config) {
+            const identificacao = getNS(notaNode, 'IdentificacaoNfse');
+            if (!identificacao) return null;
+
+            const servico = getNS(notaNode, 'Servico');
+            const valores = getNS(servico, 'Valores');
+            const prestador = getNS(notaNode, 'PrestadorServico');
+            const tomador = getNS(notaNode, 'TomadorServico');
+            const orgaoGerador = getNS(notaNode, 'OrgaoGerador');
+
+            const prestadorEnd = getNS(prestador, 'Endereco');
+            const tomadorEnd = getNS(tomador, 'Endereco');
+            const tomadorContato = getNS(tomador, 'Contato');
+
+            const dataEmissaoRaw = getTextNS(notaNode, 'DataEmissao');
+            const dataEmissao = dataEmissaoRaw ? dataEmissaoRaw.split('T')[0] : '';
+            const competenciaRaw = getTextNS(notaNode, 'Competencia');
+            const competencia = competenciaRaw ? competenciaRaw.split('T')[0] : dataEmissao;
+
+            const prestadorIdentificacao = getNS(prestador, 'IdentificacaoPrestador');
+            const prestadorCnpj = getTextNS(prestadorIdentificacao, 'Cnpj');
+            const prestadorIM = getTextNS(prestadorIdentificacao, 'InscricaoMunicipal');
+            const prestadorRazao = normalizeName(getTextNS(prestador, 'RazaoSocial'));
+            const prestadorUF = getTextNS(prestadorEnd, 'Estado');
+            const prestadorCodMun = getTextNS(prestadorEnd, 'Cidade');
+
+            const tomadorIdentificacao = getNS(tomador, 'IdentificacaoTomador');
+            const tomadorCpfCnpj = getNS(tomadorIdentificacao, 'CpfCnpj');
+            const tomadorDoc = getTextNS(tomadorCpfCnpj, 'Cnpj') || getTextNS(tomadorCpfCnpj, 'Cpf');
+            const tomadorRazao = normalizeName(getTextNS(tomador, 'RazaoSocial'));
+            const tomadorUF = getTextNS(tomadorEnd, 'Estado');
+            const tomadorCodMun = getTextNS(tomadorEnd, 'Cidade');
+
+            const codMunPrestacao = getTextNS(servico, 'MunicipioPrestacaoServico') || getTextNS(orgaoGerador, 'CodigoMunicipio');
+            const prestacaoLocal = `${reverseCodigosIBGE[codMunPrestacao]?.cidade || ''} - ${reverseCodigosIBGE[codMunPrestacao]?.uf || ''}`;
+
+            const rawAliquota = safeParseFloat(getTextNS(valores, 'Aliquota'));
+            const aliquota = (rawAliquota > 0 && rawAliquota < 1) ? rawAliquota * 100 : rawAliquota;
+
+            return {
+                numero: getTextNS(identificacao, 'Numero'),
+                codigoVerificacao: getTextNS(identificacao, 'CodigoVerificacao'),
+                dataEmissao: dataEmissao,
+                competencia: competencia,
+                discriminacao: getTextNS(servico, 'Discriminacao'),
+                situacao: 'NORMAL',
+                valorServico: safeParseFloat(getTextNS(valores, 'ValorServicos')),
+                valorDeducao: safeParseFloat(getTextNS(valores, 'ValorDeducoes')),
+                valorPis: safeParseFloat(getTextNS(valores, 'ValorPis')),
+                valorCofins: safeParseFloat(getTextNS(valores, 'ValorCofins')),
+                valorInss: safeParseFloat(getTextNS(valores, 'ValorInss')),
+                valorIr: safeParseFloat(getTextNS(valores, 'ValorIr')),
+                valorCsll: safeParseFloat(getTextNS(valores, 'ValorCsll')),
+                issRetido: getTextNS(valores, 'IssRetido', '2'),
+                valorIss: safeParseFloat(getTextNS(valores, 'ValorIss')),
+                valorIssRetido: safeParseFloat(getTextNS(valores, 'ValorIssRetido')),
+                aliquota: aliquota,
+                itemLista: getTextNS(servico, 'ItemListaServico'),
+                codigoTributacaoMunicipio: getTextNS(servico, 'CodigoTributacaoMunicipio'),
+                codMunPrestacao: codMunPrestacao,
+                prestacaoLocal: prestacaoLocal,
+                exigibilidadeISS: '1',
+                optanteSimples: getTextNS(notaNode, 'OptanteSimplesNacional', '2'),
+                prestadorCnpj: prestadorCnpj,
+                prestadorIM: prestadorIM,
+                prestadorRazao: prestadorRazao,
+                prestadorCodMun: prestadorCodMun,
+                prestadorUF: prestadorUF,
+                prestadorEnd: getTextNS(prestadorEnd, 'Endereco'),
+                prestadorNum: getTextNS(prestadorEnd, 'Numero'),
+                prestadorComp: getTextNS(prestadorEnd, 'Complemento'),
+                prestadorBairro: getTextNS(prestadorEnd, 'Bairro'),
+                prestadorCEP: getTextNS(prestadorEnd, 'Cep'),
+                tomadorDoc: tomadorDoc,
+                tomadorRazao: tomadorRazao,
+                tomadorEnd: getTextNS(tomadorEnd, 'Endereco'),
+                tomadorNum: getTextNS(tomadorEnd, 'Numero'),
+                tomadorComp: getTextNS(tomadorEnd, 'Complemento'),
+                tomadorBairro: getTextNS(tomadorEnd, 'Bairro'),
+                tomadorCodMun: tomadorCodMun,
+                tomadorUF: tomadorUF,
+                tomadorCEP: getTextNS(tomadorEnd, 'Cep'),
+                tomadorEmail: getTextNS(tomadorContato, 'Email'),
             };
         }
 
@@ -999,6 +1221,7 @@
                     let prestadorCnpj = config.cnpjPrestador;
                     let prestadorUF = config.ufPrestador;
                     let prestadorCodMun = config.codMunEmpresa;
+                    let prestadorEnd = '', prestadorNum = '', prestadorComp = '', prestadorBairro = '', prestadorCEP = '';
                     
                     let tomadorRazao = 'TOMADOR DIVERSOS';
                     let tomadorEnd = '', tomadorNum = '', tomadorComp = '', tomadorBairro = '', tomadorCidade = '', tomadorUF = '', tomadorCEP = '', tomadorEmail = '', tomadorIM = '';
@@ -1060,8 +1283,15 @@
                         if (prestadorRazaoRaw) prestadorRazao = prestadorRazaoRaw;
                         
                         // Busca endereço do prestador para definir local
+                        const tipoEndPrestador = getVal(['Tipo do Endereço do Prestador'], 12)?.trim();
+                        const logradouroPrestador = getVal(['Endereço do Prestador'], 13)?.trim();
+                        prestadorEnd = tipoEndPrestador ? `${tipoEndPrestador} ${logradouroPrestador}` : logradouroPrestador || '';
+                        prestadorNum = getVal(['Número do Endereço do Prestador'], 14)?.trim() || '';
+                        prestadorComp = getVal(['Complemento do Endereço do Prestador'], 15)?.trim() || '';
+                        prestadorBairro = getVal(['Bairro do Prestador'], 16)?.trim() || '';
                         const prestadorCidade = getVal(['Cidade do Prestador', 'Cidade Prestador'], 17)?.trim();
                         const prestadorUFArquivo = getVal(['UF do Prestador', 'UF Prestador'], 18)?.trim();
+                        prestadorCEP = getVal(['CEP do Prestador'], 19)?.trim() || '';
                         
                         if (prestadorUFArquivo) prestadorUF = prestadorUFArquivo;
                         if (prestadorCidade && prestadorUFArquivo) {
@@ -1088,14 +1318,17 @@
                         tomadorIM = getVal(['Inscrição Municipal do Tomador'], 35)?.trim();
                         tomadorRazao = getVal(['Razão Social do Tomador'], 37)?.trim() || 'TOMADOR DIVERSOS';
                         
-                        tomadorEnd = getVal(['Endereço do Tomador'], 39)?.trim();
-                        tomadorNum = getVal(['Número do Endereço do Tomador'], 40)?.trim();
-                        tomadorComp = getVal(['Complemento do Endereço do Tomador'], 41)?.trim();
-                        tomadorBairro = getVal(['Bairro do Tomador'], 42)?.trim();
-                        tomadorCidade = getVal(['Cidade do Tomador'], 43)?.trim();
-                        tomadorUF = getVal(['UF do Tomador'], 44)?.trim();
-                        tomadorCEP = getVal(['CEP do Tomador'], 45)?.trim();
-                        tomadorEmail = getVal(['Email do Tomador'], 46)?.trim();
+                        const tipoEndTomador = getVal(['Tipo do Endereço do Tomador'], 38)?.trim();
+                        const logradouroTomador = getVal(['Endereço do Tomador'], 39)?.trim();
+                        tomadorEnd = tipoEndTomador ? `${tipoEndTomador} ${logradouroTomador}` : logradouroTomador || '';
+                        
+                        tomadorNum = getVal(['Número do Endereço do Tomador'], 40)?.trim() || '';
+                        tomadorComp = getVal(['Complemento do Endereço do Tomador'], 41)?.trim() || '';
+                        tomadorBairro = getVal(['Bairro do Tomador'], 42)?.trim() || '';
+                        tomadorCidade = getVal(['Cidade do Tomador'], 43)?.trim() || '';
+                        tomadorUF = getVal(['UF do Tomador'], 44)?.trim() || '';
+                        tomadorCEP = getVal(['CEP do Tomador'], 45)?.trim() || '';
+                        tomadorEmail = getVal(['Email do Tomador'], 46)?.trim() || '';
 
                         // Retenções Federais - O PULO DO GATO
                         // Se "Repasse do Plano de Saúde" existir ou não, não importa, ele vai achar "PIS/PASEP" onde estiver.
@@ -1161,6 +1394,11 @@
                         prestadorCnpj: prestadorCnpj,
                         prestadorIM: prestadorIMArquivo || config.inscricaoMunicipalPrestador,
                         prestadorRazao: prestadorRazao,
+                        prestadorEnd: prestadorEnd,
+                        prestadorNum: prestadorNum,
+                        prestadorComp: prestadorComp,
+                        prestadorBairro: prestadorBairro,
+                        prestadorCEP: prestadorCEP,
                         prestadorCodMun: prestadorCodMun,
                         prestadorUF: prestadorUF,
                         tomadorDoc: tomadorDoc,
@@ -1241,9 +1479,18 @@
                 const pCodMun = nota.prestadorCodMun || config.codMunEmpresa;
                 const pUF = nota.prestadorUF || config.ufPrestador;
 
+                let itemListaFormatado = nota.itemLista || '';
+                if (itemListaFormatado && !itemListaFormatado.includes('.')) {
+                    if (itemListaFormatado.length === 3) {
+                        itemListaFormatado = `0${itemListaFormatado.substring(0,1)}.${itemListaFormatado.substring(1,3)}`;
+                    } else if (itemListaFormatado.length === 4) {
+                        itemListaFormatado = `${itemListaFormatado.substring(0,2)}.${itemListaFormatado.substring(2,4)}`;
+                    }
+                }
+
                 return `<CompNfse xmlns="http://www.abrasf.org.br/nfse.xsd">
     <Nfse versao="2.01">
-        <InfNfse>
+        <InfNfse Id="ID${nota.numero}">
             <Numero>${nota.numero}</Numero>
             <CodigoVerificacao>${escapeXML(nota.codigoVerificacao)}</CodigoVerificacao>
             <DataEmissao>${convertToAbrasfDate(nota.dataEmissao)}</DataEmissao>
@@ -1261,8 +1508,13 @@
                 </IdentificacaoPrestador>
                 <RazaoSocial>${escapeXML(pRazao)}</RazaoSocial>
                 <Endereco>
+                    ${nota.prestadorEnd ? `<Endereco>${escapeXML(nota.prestadorEnd)}</Endereco>` : ''}
+                    ${nota.prestadorNum ? `<Numero>${nota.prestadorNum}</Numero>` : ''}
+                    ${nota.prestadorComp ? `<Complemento>${escapeXML(nota.prestadorComp)}</Complemento>` : ''}
+                    ${nota.prestadorBairro ? `<Bairro>${escapeXML(nota.prestadorBairro)}</Bairro>` : ''}
                     <CodigoMunicipio>${pCodMun}</CodigoMunicipio>
                     <Uf>${pUF}</Uf>
+                    ${nota.prestadorCEP ? `<Cep>${nota.prestadorCEP}</Cep>` : ''}
                 </Endereco>
             </PrestadorServico>
             <OrgaoGerador>
@@ -1288,28 +1540,35 @@
                             <DescontoCondicionado>0.00</DescontoCondicionado>
                         </Valores>
                         <IssRetido>${nota.issRetido}</IssRetido>
-                        <ItemListaServico>${nota.itemLista}</ItemListaServico>
+                        <ItemListaServico>${itemListaFormatado}</ItemListaServico>
                         ${nota.codCnae ? `<CodigoCnae>${nota.codCnae}</CodigoCnae>` : ''}
                         <Discriminacao>${escapeXML(descricaoPrincipal)}</Discriminacao>
                         <CodigoMunicipio>${nota.codMunPrestacao}</CodigoMunicipio>
+                        <ExigibilidadeISS>${nota.codMunPrestacao === pCodMun ? '1' : '2'}</ExigibilidadeISS>
                         <MunicipioIncidencia>${nota.codMunPrestacao}</MunicipioIncidencia>
                     </Servico>
+                    <Prestador>
+                        <CpfCnpj><Cnpj>${pCnpj}</Cnpj></CpfCnpj>
+                        ${pIM ? `<InscricaoMunicipal>${pIM}</InscricaoMunicipal>` : ''}
+                    </Prestador>
                     <Tomador>
+                        ${(nota.tomadorDoc || nota.tomadorIM) ? `
                         <IdentificacaoTomador>
                             ${nota.tomadorDoc && nota.tomadorDoc.length === 11 ? `<CpfCnpj><Cpf>${nota.tomadorDoc}</Cpf></CpfCnpj>` : ''}
                             ${nota.tomadorDoc && nota.tomadorDoc.length === 14 ? `<CpfCnpj><Cnpj>${nota.tomadorDoc}</Cnpj></CpfCnpj>` : ''}
                             ${nota.tomadorIM ? `<InscricaoMunicipal>${nota.tomadorIM}</InscricaoMunicipal>` : ''}
-                        </IdentificacaoTomador>
+                        </IdentificacaoTomador>` : ''}
                         <RazaoSocial>${escapeXML(nota.tomadorRazao)}</RazaoSocial>
+                        ${(nota.tomadorEnd || nota.tomadorCodMun) ? `
                         <Endereco>
-                            <Endereco>${escapeXML(nota.tomadorEnd)}</Endereco>
-                            <Numero>${nota.tomadorNum}</Numero>
+                            ${nota.tomadorEnd ? `<Endereco>${escapeXML(nota.tomadorEnd)}</Endereco>` : ''}
+                            ${nota.tomadorNum ? `<Numero>${nota.tomadorNum}</Numero>` : ''}
                             ${nota.tomadorComp ? `<Complemento>${escapeXML(nota.tomadorComp)}</Complemento>` : ''}
-                            <Bairro>${escapeXML(nota.tomadorBairro)}</Bairro>
-                            <CodigoMunicipio>${nota.tomadorCodMun}</CodigoMunicipio>
-                            <Uf>${nota.tomadorUF}</Uf>
-                            <Cep>${nota.tomadorCEP}</Cep>
-                        </Endereco>
+                            ${nota.tomadorBairro ? `<Bairro>${escapeXML(nota.tomadorBairro)}</Bairro>` : ''}
+                            ${nota.tomadorCodMun ? `<CodigoMunicipio>${nota.tomadorCodMun}</CodigoMunicipio>` : ''}
+                            ${nota.tomadorUF ? `<Uf>${nota.tomadorUF}</Uf>` : ''}
+                            ${nota.tomadorCEP ? `<Cep>${nota.tomadorCEP}</Cep>` : ''}
+                        </Endereco>` : ''}
                         ${nota.tomadorEmail ? `<Contato><Email>${nota.tomadorEmail}</Email></Contato>` : ''}
                     </Tomador>
                     <OptanteSimplesNacional>${nota.optanteSimples}</OptanteSimplesNacional>
@@ -1539,5 +1798,6 @@
         init();
     });
     </script>
+<script type="module" src="/index.tsx"></script>
 </body>
 </html>
