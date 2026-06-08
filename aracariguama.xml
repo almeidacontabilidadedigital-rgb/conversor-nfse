@@ -1,0 +1,110 @@
+<?xml version="1.0"?>
+<ISSEConsultaNotaRetorno xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="XSDISSEConsultaNotaRetorno.xsd">
+  <Header>
+    <Versao>003</Versao>
+    <CNPJCPFPrestador>31494473000540</CNPJCPFPrestador>
+  </Header>
+  <DadosNotaFiscal>
+    <NumeroNF>81</NumeroNF>
+    <ChaveValidacao>B4FE-1D2E0</ChaveValidacao>
+    <Lote>0</Lote>
+    <SituacaoNF>N</SituacaoNF>
+    <TipoNF>P</TipoNF>
+    <Emissao>20/04/2026 09:32:13</Emissao>
+    <CNPJCPFTomador>54070153000134</CNPJCPFTomador>
+    <NomeTomador>ECO METAIS LTDA</NomeTomador>
+    <InscricaoMunicipalTomador>
+    </InscricaoMunicipalTomador>
+    <InscricaoEstadualTomador>
+    </InscricaoEstadualTomador>
+    <UFTomador>SP</UFTomador>
+    <CidadeTomador>SAO PAULO</CidadeTomador>
+    <EnderecoTomador>RUA DUARTE DE AZEVEDO</EnderecoTomador>
+    <NumeroTomador>431</NumeroTomador>
+    <ComplementoTomador>CONJUNTO 95</ComplementoTomador>
+    <BairroTomador>SANTANA</BairroTomador>
+    <CEPTomador>02036021</CEPTomador>
+    <EmailTomador>beth.siqueira@ecofinancebrasil.com.br</EmailTomador>
+    <Observacao>
+    </Observacao>
+    <NFSubstituta>0</NFSubstituta>
+    <LocalPrestacao>1</LocalPrestacao>
+    <DescricaoLocalPrestacao>
+    </DescricaoLocalPrestacao>
+    <DescricaoLocalPrestacaoComplementar>
+    </DescricaoLocalPrestacaoComplementar>
+    <InscricaoImovel>0</InscricaoImovel>
+    <InscriçãoMunicipalPrestador>3497655211223</InscriçãoMunicipalPrestador>
+    <InscriçãoEstadualPrestador>734.040.020.114</InscriçãoEstadualPrestador>
+    <EmailPrestador>tatiana.machado@cagtlogistica.com.br</EmailPrestador>
+    <cepPrestador>
+    </cepPrestador>
+    <UFLocalPrestacao>
+    </UFLocalPrestacao>
+    <CidadeLocalPrestacao>
+    </CidadeLocalPrestacao>
+    <EnderecoLocalPrestacao>
+    </EnderecoLocalPrestacao>
+    <NumeroLocalPrestacao>
+    </NumeroLocalPrestacao>
+    <ComplementoLocalPrestacao>
+    </ComplementoLocalPrestacao>
+    <BairroLocalPrestacao>
+    </BairroLocalPrestacao>
+    <CEPLocalPrestacao>
+    </CEPLocalPrestacao>
+    <MotivoCancelamento>
+    </MotivoCancelamento>
+    <TipoDocumento>003</TipoDocumento>
+    <ValorTotalNota>4314.84</ValorTotalNota>
+    <ValorLiquidoNota>4314.84</ValorLiquidoNota>
+    <DadosItensNotaFiscal>
+      <ItemAtividade>23060008</ItemAtividade>
+      <TextoItem>Servico de Armazenagem||Armazenagem e Procedimento Fiscal 1o quinzena de abril de 2026|Vencimento: 05/05/2026 - Qtde 1 x Valor Unit. R$ 4.314,84 = Total R$ 4.314,84.|</TextoItem>
+      <ValorItem>4314.84</ValorItem>
+      <ValorDeducao>0.00</ValorDeducao>
+      <Retido>N</Retido>
+      <Pais>
+      </Pais>
+      <CodigoServico>11-04 - ARMAZENAMENTO, DEPÓSITO, CARGA, DESCARGA, ARRUMAÇÃO E GUARDA DE BENS DE QUALQUER ESPÉCIE</CodigoServico>
+      <ValorBaseCalculo>4.314,84</ValorBaseCalculo>
+      <ValorISS>215,74</ValorISS>
+      <Aliquota>5,00%</Aliquota>
+    </DadosItensNotaFiscal>
+    <DadosImpostosNotaFiscal>
+      <Imposto>IRPJ</Imposto>
+      <ValorImposto>0.00</ValorImposto>
+    </DadosImpostosNotaFiscal>
+    <DadosImpostosNotaFiscal>
+      <Imposto>ISSQN</Imposto>
+      <ValorImposto>215.74</ValorImposto>
+    </DadosImpostosNotaFiscal>
+    <DadosImpostosNotaFiscal>
+      <Imposto>IRRF</Imposto>
+      <ValorImposto>0.00</ValorImposto>
+    </DadosImpostosNotaFiscal>
+    <DadosImpostosNotaFiscal>
+      <Imposto>COFINS</Imposto>
+      <ValorImposto>0.00</ValorImposto>
+    </DadosImpostosNotaFiscal>
+    <DadosImpostosNotaFiscal>
+      <Imposto>INSS</Imposto>
+      <ValorImposto>0.00</ValorImposto>
+    </DadosImpostosNotaFiscal>
+    <DadosImpostosNotaFiscal>
+      <Imposto>PIS</Imposto>
+      <ValorImposto>0.00</ValorImposto>
+    </DadosImpostosNotaFiscal>
+    <DadosImpostosNotaFiscal>
+      <Imposto>CSLL</Imposto>
+      <ValorImposto>0.00</ValorImposto>
+    </DadosImpostosNotaFiscal>
+    <DadosImpostosNotaFiscal>
+      <Imposto>ISS</Imposto>
+      <ValorImposto>0.00</ValorImposto>
+    </DadosImpostosNotaFiscal>
+    <OutrasInformacoes>
+      <Informacao> Local de Prestação: Sede do Prestador.</Informacao>
+    </OutrasInformacoes>
+  </DadosNotaFiscal>
+</ISSEConsultaNotaRetorno>
