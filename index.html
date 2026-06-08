@@ -1869,6 +1869,8 @@
             const idxCompetencia = getColIndex(['COMPETENCIA']);
             const idxTomadorDoc = getColIndex(['CNPJCPFTOMADOR', 'CPFCNPJTOMADOR', 'CNPJTOMADOR', 'CPFTOMADOR']);
             const idxTomadorRazao = getColIndex(['NOMETOMADOR', 'RAZAOSOCIALTOMADOR', 'NOMERAZAOTOMADOR']);
+            const idxPrestadorDoc = getColIndex(['CNPJCPFPRESTADOR', 'CPFCNPJPRESTADOR', 'CNPJPRESTADOR', 'CPFPRESTADOR']);
+            const idxPrestadorRazao = getColIndex(['NOMEPRESTADOR', 'RAZAOSOCIALPRESTADOR', 'NOMERAZAOPRESTADOR']);
             const idxMunEmissor = getColIndex(['MUNICIPIOEMISSOR', 'CIDADEEMISSOR']);
             const idxValorServico = getColIndex(['VALORDOSERVICOR', 'VALORDOSERVICO', 'VALORSERVICO']);
             const idxInscMunEmitente = getColIndex(['INSCMUNICIPALEMITENTE', 'INSCRICAOMUNICIPALEMITENTE', 'IMEMITENTE']);
@@ -1896,7 +1898,7 @@
                 idxSituacao = getColIndex(['SITUACAO', 'SITUACAONFSE']);
             }
 
-            log(`Mapeamento concluído. Número: ${idxNumero}, Chave: ${idxChave}, Tomador: ${idxTomadorRazao}, Serviços: ${idxValorServico}`, 'info');
+            log(`Mapeamento concluído. Número: ${idxNumero}, Chave: ${idxChave}, Tomador: ${idxTomadorRazao}, Prestador: ${idxPrestadorRazao}, Serviços: ${idxValorServico}`, 'info');
 
             for (let i = 1; i < linhas.length; i++) {
                 const cols = parseCSVLine(linhas[i], ';');
@@ -1911,13 +1913,6 @@
                     if (!numero) continue;
 
                     const chave = idxChave !== -1 ? cols[idxChave]?.trim() : '';
-                    let prestadorCnpj = config.cnpjPrestador;
-                    if (chave && chave.length >= 23) {
-                        const extractedCnpj = chave.substring(9, 23);
-                        if (/^\d{14}$/.test(extractedCnpj)) {
-                            prestadorCnpj = extractedCnpj;
-                        }
-                    }
 
                     let dataEmissao = '';
                     const dataRaw = idxDataEmissao !== -1 ? cols[idxDataEmissao]?.trim() : '';
@@ -2030,21 +2025,133 @@
                     const valorIr = idxIrrf !== -1 ? safeParseFloat(cols[idxIrrf]) : 0;
                     const valorInss = idxPrevidRet !== -1 ? safeParseFloat(cols[idxPrevidRet]) : 0;
 
-                    const prestadorRazao = config.razaoSocialPrestador;
-                    const prestadorIM = idxInscMunEmitente !== -1 ? cols[idxInscMunEmitente]?.trim() : config.inscricaoMunicipalPrestador;
-                    
-                    let prestadorUF = config.ufPrestador;
-                    let prestadorCodMun = config.codMunEmpresa;
                     const munEmissorRaw = idxMunEmissor !== -1 ? cols[idxMunEmissor]?.trim() : '';
-                    if (munEmissorRaw && munEmissorRaw.includes('/')) {
-                        const [cid, uf] = munEmissorRaw.split('/');
-                        prestadorUF = uf.trim();
-                        prestadorCodMun = findIBGECode(cid.trim(), uf.trim());
+
+                    // Detect whether our company is the tomador or the prestador of the service:
+                    // If idxTomadorDoc is -1, but idxPrestadorDoc is found, then this spreadsheet lists RECEIVED SERVICES
+                    // where we are the tomador, and the other party is the prestador.
+                    const isReceivedNotes = (idxTomadorDoc === -1 && idxPrestadorDoc !== -1);
+
+                    let prestadorCnpj = '';
+                    let prestadorRazao = '';
+                    let prestadorIM = '';
+                    let prestadorUF = '';
+                    let prestadorCodMun = '';
+                    let prestadorEnd = '';
+                    let prestadorNum = '';
+                    let prestadorComp = '';
+                    let prestadorBairro = '';
+                    let prestadorCEP = '';
+
+                    let tomadorDoc = '';
+                    let tomadorRazao = '';
+                    let tomadorIM = '';
+                    let tomadorEnd = '';
+                    let tomadorNum = '';
+                    let tomadorComp = '';
+                    let tomadorBairro = '';
+                    let tomadorCodMun = '';
+                    let tomadorUF = '';
+                    let tomadorCEP = '';
+
+                    if (isReceivedNotes) {
+                        // We are the Tomador, cols list the Prestador
+                        prestadorCnpj = idxPrestadorDoc !== -1 ? cols[idxPrestadorDoc]?.trim().replace(/\D/g, '') : '';
+                        prestadorRazao = idxPrestadorRazao !== -1 ? cols[idxPrestadorRazao]?.trim() : 'PRESTADOR DIVERSOS';
+                        prestadorIM = idxInscMunEmitente !== -1 ? cols[idxInscMunEmitente]?.trim() : '';
+
+                        // Query prestador details to get their full address
+                        const prestadorData = await buscarDadosCompletosTomador(prestadorCnpj);
+                        if (prestadorData) {
+                            prestadorUF = prestadorData.tomadorUF;
+                            prestadorCodMun = prestadorData.tomadorCodMun;
+                            prestadorEnd = prestadorData.tomadorEnd;
+                            prestadorNum = prestadorData.tomadorNum;
+                            prestadorComp = prestadorData.tomadorComp;
+                            prestadorBairro = prestadorData.tomadorBairro;
+                            prestadorCEP = prestadorData.tomadorCEP;
+                            if (!prestadorRazao || prestadorRazao === 'PRESTADOR DIVERSOS') {
+                                prestadorRazao = prestadorData.tomadorRazao;
+                            }
+                        } else {
+                            // FALLBACKS
+                            if (munEmissorRaw && munEmissorRaw.includes('/')) {
+                                const [cid, uf] = munEmissorRaw.split('/');
+                                prestadorUF = uf.trim();
+                                prestadorCodMun = findIBGECode(cid.trim(), uf.trim());
+                            } else {
+                                prestadorUF = config.ufPrestador;
+                                prestadorCodMun = config.codMunEmpresa;
+                            }
+                        }
+
+                        // Tomador is our selected client (config)
+                        tomadorDoc = config.cnpjPrestador;
+                        tomadorRazao = config.razaoSocialPrestador;
+                        tomadorIM = config.inscricaoMunicipalPrestador;
+
+                        const tomadorData = await buscarDadosCompletosTomador(config.cnpjPrestador);
+                        if (tomadorData) {
+                            tomadorUF = tomadorData.tomadorUF;
+                            tomadorCodMun = tomadorData.tomadorCodMun;
+                            tomadorEnd = tomadorData.tomadorEnd;
+                            tomadorNum = tomadorData.tomadorNum;
+                            tomadorComp = tomadorData.tomadorComp;
+                            tomadorBairro = tomadorData.tomadorBairro;
+                            tomadorCEP = tomadorData.tomadorCEP;
+                        } else {
+                            tomadorUF = config.ufPrestador;
+                            tomadorCodMun = config.codMunEmpresa;
+                        }
+                    } else {
+                        // We are the Prestador, cols list the Tomador (Standard Case)
+                        if (chave && chave.length >= 23) {
+                            const extractedCnpj = chave.substring(9, 23);
+                            if (/^\d{14}$/.test(extractedCnpj)) {
+                                prestadorCnpj = extractedCnpj;
+                            }
+                        }
+                        if (!prestadorCnpj) prestadorCnpj = config.cnpjPrestador;
+
+                        prestadorRazao = config.razaoSocialPrestador;
+                        prestadorIM = idxInscMunEmitente !== -1 ? cols[idxInscMunEmitente]?.trim() : config.inscricaoMunicipalPrestador;
+                        
+                        if (munEmissorRaw && munEmissorRaw.includes('/')) {
+                            const [cid, uf] = munEmissorRaw.split('/');
+                            prestadorUF = uf.trim();
+                            prestadorCodMun = findIBGECode(cid.trim(), uf.trim());
+                        } else {
+                            prestadorUF = config.ufPrestador;
+                            prestadorCodMun = config.codMunEmpresa;
+                        }
+
+                        // Get prestador address if possible to make it robust
+                        const prestadorData = await buscarDadosCompletosTomador(prestadorCnpj);
+                        if (prestadorData) {
+                            prestadorEnd = prestadorData.tomadorEnd;
+                            prestadorNum = prestadorData.tomadorNum;
+                            prestadorComp = prestadorData.tomadorComp;
+                            prestadorBairro = prestadorData.tomadorBairro;
+                            prestadorCEP = prestadorData.tomadorCEP;
+                        }
+
+                        // Tomador is on the spreadsheet
+                        tomadorDoc = idxTomadorDoc !== -1 ? cols[idxTomadorDoc]?.trim().replace(/\D/g, '') : '';
+                        tomadorRazao = idxTomadorRazao !== -1 ? cols[idxTomadorRazao]?.trim() : 'TOMADOR DIVERSOS';
+
+                        const tomadorData = await buscarDadosCompletosTomador(tomadorDoc);
+                        if (tomadorData) {
+                            tomadorRazao = tomadorData.tomadorRazao || tomadorRazao;
+                            tomadorEnd = tomadorData.tomadorEnd;
+                            tomadorNum = tomadorData.tomadorNum;
+                            tomadorComp = tomadorData.tomadorComp;
+                            tomadorBairro = tomadorData.tomadorBairro;
+                            tomadorCodMun = tomadorData.tomadorCodMun;
+                            tomadorUF = tomadorData.tomadorUF;
+                            tomadorCEP = tomadorData.tomadorCEP;
+                        }
                     }
 
-                    const tomadorDoc = idxTomadorDoc !== -1 ? cols[idxTomadorDoc]?.trim().replace(/\D/g, '') : '';
-                    const tomadorRazao = idxTomadorRazao !== -1 ? cols[idxTomadorRazao]?.trim() : 'TOMADOR DIVERSOS';
-                    const tomadorData = await buscarDadosCompletosTomador(tomadorDoc);
                     const discriminacao = idxDiscriminacao !== -1 ? cols[idxDiscriminacao]?.trim() : '';
 
                     let itemLista = '';
@@ -2089,23 +2196,23 @@
                         prestadorCnpj: prestadorCnpj,
                         prestadorIM: prestadorIM,
                         prestadorRazao: prestadorRazao,
-                        prestadorEnd: '',
-                        prestadorNum: '',
-                        prestadorComp: '',
-                        prestadorBairro: '',
-                        prestadorCEP: '',
+                        prestadorEnd: prestadorEnd,
+                        prestadorNum: prestadorNum,
+                        prestadorComp: prestadorComp,
+                        prestadorBairro: prestadorBairro,
+                        prestadorCEP: prestadorCEP,
                         prestadorCodMun: prestadorCodMun,
                         prestadorUF: prestadorUF,
                         tomadorDoc: tomadorDoc,
-                        tomadorIM: '',
-                        tomadorRazao: tomadorData ? tomadorData.tomadorRazao : tomadorRazao,
-                        tomadorEnd: tomadorData ? tomadorData.tomadorEnd : '',
-                        tomadorNum: tomadorData ? tomadorData.tomadorNum : '',
-                        tomadorComp: tomadorData ? tomadorData.tomadorComp : '',
-                        tomadorBairro: tomadorData ? tomadorData.tomadorBairro : '',
-                        tomadorCodMun: tomadorData ? tomadorData.tomadorCodMun : '',
-                        tomadorUF: tomadorData ? tomadorData.tomadorUF : '',
-                        tomadorCEP: tomadorData ? tomadorData.tomadorCEP : '',
+                        tomadorIM: tomadorIM,
+                        tomadorRazao: tomadorRazao,
+                        tomadorEnd: tomadorEnd,
+                        tomadorNum: tomadorNum,
+                        tomadorComp: tomadorComp,
+                        tomadorBairro: tomadorBairro,
+                        tomadorCodMun: tomadorCodMun,
+                        tomadorUF: tomadorUF,
+                        tomadorCEP: tomadorCEP,
                         tomadorEmail: ''
                     });
 
